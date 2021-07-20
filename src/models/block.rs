@@ -1,10 +1,11 @@
+use std::collections::HashSet;
+
 use fugue::db::BasicBlock;
 
 use fugue::ir::Translator;
 use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::il::ecode::{BranchTarget, Entity, Location, Stmt};
+use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
 
-use std::collections::HashSet;
 
 use thiserror::Error;
 
@@ -16,18 +17,23 @@ pub enum Error {
     Lifting(#[from] fugue::ir::error::Error),
 }
 
-pub struct SimpleBlock {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Block {
     operations: Vec<Entity<Stmt>>,
-    next_block: Location,
+    next_block: EntityId,
 }
 
-impl SimpleBlock {
+impl Block {
     pub fn location(&self) -> &Location {
         self.first().location()
     }
 
-    pub fn next_location(&self) -> &Location {
+    pub fn next_block(&self) -> &EntityId {
         &self.next_block
+    }
+
+    pub fn next_location(&self) -> &Location {
+        self.next_block.location()
     }
 
     pub fn first(&self) -> &Entity<Stmt> {
@@ -56,12 +62,12 @@ impl SimpleBlock {
     }
 }
 
-pub struct SimpleBlockLifter<'translator> {
+pub struct BlockLifter<'translator> {
     translator: &'translator Translator,
     context: ContextDatabase,
 }
 
-impl<'trans> SimpleBlockLifter<'trans> {
+impl<'trans> BlockLifter<'trans> {
     pub fn new(translator: &'trans Translator) -> Self {
         Self {
             translator,
@@ -69,7 +75,7 @@ impl<'trans> SimpleBlockLifter<'trans> {
         }
     }
 
-    pub fn from_basic(&mut self, block: &BasicBlock) -> Result<(Vec<SimpleBlock>, HashSet<Location>), Error> {
+    pub fn from_block(&mut self, block: &BasicBlock) -> Result<Vec<Entity<Block>>, Error> {
         let mut offset = 0;
         let mut blocks = Vec::with_capacity(4);
 
@@ -139,7 +145,7 @@ impl<'trans> SimpleBlockLifter<'trans> {
                 .drain(..)
                 .enumerate()
                 .map(|(offset, operation)| {
-                    Entity::new(Location::new(address.clone(), offset), operation)
+                    Entity::new("stmt", Location::new(address.clone(), offset), operation)
                 })
                 .collect::<Vec<_>>();
 
@@ -148,22 +154,22 @@ impl<'trans> SimpleBlockLifter<'trans> {
             let mut last_location = Location::new(address.clone() + ecode.length, 0);
 
             for start in local_targets.into_iter() {
-                let block = SimpleBlock {
+                let block = Block {
                     operations: operations.split_off(start),
-                    next_block: last_location,
+                    next_block: EntityId::new("blk", last_location),
                 };
                 last_location = block.location().clone();
-                local_blocks.push(block);
+                local_blocks.push(Entity::new("blk", last_location.clone(), block));
             }
 
-            local_blocks.push(SimpleBlock {
+            local_blocks.push(Entity::new("blk", Location::new(address.clone(), 0), Block {
                 operations: if operations.is_empty() {
-                    vec![Entity::new(Location::new(address, 0), Stmt::skip())]
+                    vec![Entity::new("stmt", Location::new(address, 0), Stmt::skip())]
                 } else {
                     operations
                 },
-                next_block: last_location,
-            });
+                next_block: EntityId::new("blk", last_location),
+            }));
 
             blocks.extend(local_blocks.into_iter().rev());
 
@@ -172,14 +178,14 @@ impl<'trans> SimpleBlockLifter<'trans> {
 
         // Merge blocks that are not targets of other blocks
         for index in (1..blocks.len()).rev() {
-            if !blocks[index - 1].last().value().is_branch() && !targets.contains(blocks[index].location()) {
-                let block = blocks.remove(index);
-                blocks[index - 1].operations
+            if !blocks[index - 1].value().last().value().is_branch() && !targets.contains(blocks[index].location()) {
+                let block = blocks.remove(index).into_value();
+                blocks[index - 1].value_mut().operations
                     .extend(block.operations.into_iter());
-                blocks[index - 1].next_block = block.next_block;
+                blocks[index - 1].value_mut().next_block = block.next_block;
             }
         }
 
-        Ok((blocks, targets))
+        Ok(blocks)
     }
 }

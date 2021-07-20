@@ -9,8 +9,6 @@ use crate::models::Block;
 use crate::models::{Function, FunctionLifter};
 use crate::models::ICFG;
 
-use crate::traits::*;
-
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -19,15 +17,16 @@ pub enum Error {
     Lifting(#[from] crate::models::function::Error),
 }
 
-pub struct Program {
-    database: Database,
+#[derive(Clone)]
+pub struct Program<'db> {
+    database: &'db Database,
     translator: Translator,
     functions: HashMap<EntityId, Entity<Function>>,
     blocks: HashMap<EntityId, Entity<Block>>,
 }
 
-impl Program {
-    pub fn new(database: Database) -> Result<Self, Error> {
+impl<'db> Program<'db> {
+    pub fn new(database: &'db Database) -> Result<Self, Error> {
         let trans = database.default_translator();
         let mut function_lifter = FunctionLifter::new(&trans);
 

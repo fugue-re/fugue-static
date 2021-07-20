@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use petgraph::stable_graph::{NodeIndex, StableDiGraph as Graph};
+use petgraph::EdgeDirection;
 
 use fugue::ir::il::ecode::{Entity, EntityId, Location, Stmt};
 
-use crate::models::{Block, Function, Program};
-use crate::traits::*;
+use crate::models::Block;
 
 #[derive(Debug, Clone)]
 pub enum Edge<'a> {
@@ -13,10 +13,28 @@ pub enum Edge<'a> {
     Jump(Option<&'a Entity<Stmt>>),
 }
 
+impl<'a> Edge<'a> {
+    pub fn is_call(&self) -> bool {
+        matches!(self, Edge::Call(_))
+    }
+
+    pub fn is_jump(&self) -> bool {
+        matches!(self, Edge::Jump(_))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Node<'a> {
     BlockStart(&'a Entity<Block>),
     BlockEnd(&'a Entity<Block>),
+}
+
+impl<'a> Node<'a> {
+    pub fn block(&self) -> &'a Entity<Block> {
+        match self {
+            Self::BlockStart(blk) | Self::BlockEnd(blk) => blk,
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -37,6 +55,57 @@ impl<'a> ICFG<'a> {
 
     pub fn edge_count(&self) -> usize {
         self.graph.edge_count()
+    }
+
+    pub fn get_block<L: Into<Location>>(&self, location: L) -> Option<&'a Entity<Block>> {
+        let id = EntityId::new("blk", location.into());
+        let (blk_start, _) = self.entity_mapping.get(&id)?;
+        self.graph.node_weight(*blk_start)
+            .map(Node::block)
+    }
+
+    pub fn with_preds<L, O, F>(&self, location: L, mut f: F) -> Option<O>
+    where L: Into<Location>,
+          O: Default,
+          F: FnMut(O, &'a Entity<Block>, Edge<'a>) -> O {
+
+        let id = EntityId::new("blk", location.into());
+        let (blk_start, _) = self.entity_mapping.get(&id)?;
+
+        let mut walker = self.graph
+            .neighbors_directed(*blk_start, EdgeDirection::Incoming)
+            .detach();
+
+        let mut out = O::default();
+        while let Some((ex, nx)) = walker.next(&self.graph) {
+            let node = self.graph.node_weight(nx).unwrap().block();
+            let edge = self.graph.edge_weight(ex).unwrap();
+
+            out = f(out, node, edge.clone());
+        }
+        Some(out)
+    }
+
+    pub fn with_succs<L, O, F>(&self, location: L, mut f: F) -> Option<O>
+    where L: Into<Location>,
+          O: Default,
+          F: FnMut(O, &'a Entity<Block>, Edge<'a>) -> O {
+
+        let id = EntityId::new("blk", location.into());
+        let (_, blk_end) = self.entity_mapping.get(&id)?;
+
+        let mut walker = self.graph
+            .neighbors_directed(*blk_end, EdgeDirection::Outgoing)
+            .detach();
+
+        let mut out = O::default();
+        while let Some((ex, nx)) = walker.next(&self.graph) {
+            let node = self.graph.node_weight(nx).unwrap().block();
+            let edge = self.graph.edge_weight(ex).unwrap();
+
+            out = f(out, node, edge.clone());
+        }
+        Some(out)
     }
 
     pub fn add_block(&mut self, block: &'a Entity<Block>) -> (NodeIndex<u32>, NodeIndex<u32>) {

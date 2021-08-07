@@ -6,7 +6,6 @@ use fugue::ir::Translator;
 use fugue::ir::disassembly::ContextDatabase;
 use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
 
-
 use thiserror::Error;
 
 use crate::traits::*;

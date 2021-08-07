@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use petgraph::stable_graph::{NodeIndex, StableDiGraph as Graph};
 use petgraph::EdgeDirection;
+use petgraph::visit::{Dfs, DfsPostOrder, Reversed};
 
 use fugue::ir::il::ecode::{Entity, EntityId, Location, Stmt};
 
@@ -145,5 +146,49 @@ impl<'a> ICFG<'a> {
         let (blk_start, _) = self.entity_mapping[tgt.id()];
 
         self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(blk.value().last())));
+    }
+}
+
+#[derive(Clone)]
+pub struct PreOrderIterator<'a, 'b> {
+    icfg: &'b ICFG<'a>,
+    visitor: Dfs<NodeIndex<u32>, HashSet<NodeIndex<u32>>>,
+}
+
+impl<'a, 'b> Iterator for PreOrderIterator<'a, 'b> {
+    type Item = &'b Node<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.visitor.next(&self.icfg.graph)
+            .and_then(|id| self.icfg.graph.node_weight(id))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (
+            self.visitor.stack.len(),
+            Some(self.icfg.node_count() - self.visitor.discovered.len()),
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct RevPostOrderIterator<'a, 'b> {
+    icfg: &'b ICFG<'a>,
+    visitor: DfsPostOrder<NodeIndex<u32>, HashSet<NodeIndex<u32>>>,
+}
+
+impl<'a, 'b> Iterator for RevPostOrderIterator<'a, 'b> {
+    type Item = &'b Node<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.visitor.next(Reversed(&self.icfg.graph))
+            .and_then(|id| self.icfg.graph.node_weight(id))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (
+            self.visitor.stack.len(),
+            Some(self.icfg.node_count() - self.visitor.finished.len()),
+        )
     }
 }

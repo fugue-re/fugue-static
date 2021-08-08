@@ -1,35 +1,7 @@
-use fugue::ir::il::ecode::Stmt;
+pub mod stmt;
+pub use stmt::StmtExt;
 
-pub trait StmtExt {
-    fn is_branch(&self) -> bool;
-    fn is_jump(&self) -> bool;
-    fn is_cond(&self) -> bool;
-    fn is_call(&self) -> bool;
-    fn is_return(&self) -> bool;
-}
+pub mod visitor;
+pub use visitor::Visit;
 
-impl StmtExt for Stmt {
-    fn is_branch(&self) -> bool {
-        matches!(self,
-                 Stmt::Branch(_) |
-                 Stmt::CBranch(_, _) |
-                 Stmt::Call(_) |
-                 Stmt::Return(_))
-    }
-
-    fn is_jump(&self) -> bool {
-        matches!(self, Stmt::Branch(_) | Stmt::CBranch(_, _))
-    }
-
-    fn is_cond(&self) -> bool {
-        matches!(self, Stmt::CBranch(_, _))
-    }
-
-    fn is_call(&self) -> bool {
-        matches!(self, Stmt::Call(_))
-    }
-
-    fn is_return(&self) -> bool {
-        matches!(self, Stmt::Return(_))
-    }
-}
+pub mod visitor_mut;

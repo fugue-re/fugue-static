@@ -170,6 +170,13 @@ pub trait VisitMut {
         self.visit_expr_mut(expr);
     }
 
+    fn visit_stmt_phi_mut(&mut self, var: &mut Var, vars: &mut SmallVec<[Var; 4]>) {
+        self.visit_var_mut(var);
+        for pvar in vars {
+            self.visit_var_mut(pvar);
+        }
+    }
+
     #[allow(unused)]
     fn visit_stmt_store_size_mut(&mut self, size: usize) {}
     #[allow(unused)]
@@ -218,6 +225,7 @@ pub trait VisitMut {
     fn visit_stmt_mut(&mut self, stmt: &mut Stmt) {
         match stmt {
             Stmt::Assign(ref mut var, ref mut expr) => self.visit_stmt_assign_mut(var, expr),
+            Stmt::Phi(ref mut var, ref mut vars) => self.visit_stmt_phi_mut(var, vars),
             Stmt::Store(ref mut loc, ref mut val, size, ref mut space) => {
                 self.visit_stmt_store_mut(loc, val, *size, space)
             }

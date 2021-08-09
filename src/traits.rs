@@ -5,3 +5,4 @@ pub mod visitor;
 pub use visitor::Visit;
 
 pub mod visitor_mut;
+pub use visitor_mut::VisitMut;

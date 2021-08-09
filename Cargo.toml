@@ -5,6 +5,7 @@ authors = ["Sam Thomas <st@xv.ax>"]
 edition = "2018"
 
 [dependencies]
+egg = "0.6"
 fixedbitset = "0.4"
 fugue = { version = "0.2", registry = "fugue" }
 petgraph = "0.6"

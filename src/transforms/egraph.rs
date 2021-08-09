@@ -1,4 +1,5 @@
 use crate::traits::Visit;
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -9,6 +10,7 @@ use fugue::ir::il::ecode::{self as il, Cast, Location};
 
 use std::num::ParseIntError;
 use egg::{define_language, EGraph, Id, Symbol};
+use egg::{rewrite, AstSize, Extractor, RecExpr, Rewrite, Runner};
 
 use thiserror::Error;
 
@@ -74,6 +76,12 @@ impl From<&il::Var> for Var {
             bits: v.bits(),
             generation: v.generation(),
         }
+    }
+}
+
+impl Var {
+    fn into_var_tuple(&self) -> (usize, u64, usize) {
+        (self.space, self.offset, self.generation)
     }
 }
 
@@ -208,6 +216,8 @@ define_language! {
 struct ELanguageVisitor {
     graph: EGraph<ELanguage, ()>,
     last_id: Option<Id>, // stack ids for child nodes
+    vars: HashMap<(usize, u64, usize), (usize, Id)>,
+    simple_ssa: bool,
 }
 
 impl ELanguageVisitor {
@@ -230,7 +240,15 @@ impl ELanguageVisitor {
 
 impl<'ecode> Visit<'ecode> for ELanguageVisitor {
     fn visit_expr_var(&mut self, var: &'ecode il::Var) {
-        self.add(ELanguage::Var(Var::from(var)));
+        let var = Var::from(var);
+        if self.simple_ssa {
+            if let Some((_, id)) = self.vars.get(&var.into_var_tuple()) {
+                let id = id.clone();
+                self.insert_id(id);
+                return
+            }
+        }
+        self.add(ELanguage::Var(var));
     }
 
     fn visit_expr_val(&mut self, bv: &'ecode BitVec) {
@@ -387,10 +405,19 @@ impl<'ecode> Visit<'ecode> for ELanguageVisitor {
     }
 
     fn visit_stmt_assign(&mut self, var: &'ecode il::Var, expr: &'ecode il::Expr) {
-        let varid = self.graph.add(ELanguage::Var(Var::from(var)));
-
         self.visit_expr(expr);
         let exid = self.take_id();
+
+        let mut var = Var::from(var);
+
+        if self.simple_ssa {
+            let generation = self.vars.entry(var.into_var_tuple()).or_insert((var.generation, exid.clone()));
+            generation.0 += 1;
+            generation.1 = exid.clone();
+            var.generation = generation.0;
+        }
+
+        let varid = self.graph.add(ELanguage::Var(var));
 
         self.add(ELanguage::Assign([varid, exid]))
     }
@@ -460,10 +487,84 @@ impl<'ecode> Visit<'ecode> for ELanguageVisitor {
 }
 
 impl ELanguage {
-    pub fn from_stmt(stmt: &il::Stmt) -> EGraph<ELanguage, ()> {
+    pub fn from_stmt(stmt: &il::Stmt) -> (Id, EGraph<ELanguage, ()>) {
+        Self::from_stmt_with(stmt, false)
+    }
+
+    pub fn from_stmt_with(stmt: &il::Stmt, ssa: bool) -> (Id, EGraph<ELanguage, ()>) {
         let mut visit = ELanguageVisitor::default();
+        visit.simple_ssa = ssa;
+
         visit.visit_stmt(stmt);
-        visit.graph
+        (visit.take_id(), visit.graph)
+    }
+
+    pub fn from_stmts<'a, I>(stmts: I) -> (Vec<Id>, EGraph<ELanguage, ()>)
+    where I: Iterator<Item=&'a il::Stmt> {
+        Self::from_stmts_with(stmts, false)
+    }
+
+    pub fn from_stmts_with<'a, I>(stmts: I, ssa: bool) -> (Vec<Id>, EGraph<ELanguage, ()>)
+    where I: Iterator<Item=&'a il::Stmt> {
+        let mut visit = ELanguageVisitor::default();
+        visit.simple_ssa = ssa;
+
+        let mut roots = Vec::default();
+
+        for stmt in stmts {
+            visit.visit_stmt(stmt);
+            if let Some(id) = visit.last_id.take() {
+                roots.push(id);
+            }
+        }
+
+        (roots, visit.graph)
+    }
+
+    pub fn simplify(graph: EGraph<ELanguage, ()>, roots: Vec<Id>) -> Vec<RecExpr<ELanguage>> {
+        let rules: Vec<Rewrite<Self, ()>> = vec![
+            rewrite!("and-self"; "(and ?a ?a)" => "?a"),
+            rewrite!("and-0"; "(and ?a 0)" => "0"),
+
+            rewrite!("or-self"; "(or ?a ?a)" => "?a"),
+            rewrite!("xor-self"; "(xor ?a ?a)" => "0"),
+
+            rewrite!("double-not"; "(not (not ?a))" => "?a"),
+
+            rewrite!("add-0"; "(add ?a 0)" => "?a"),
+            rewrite!("sub-0"; "(sub ?a 0)" => "?a"),
+            rewrite!("mul-0"; "(mul ?a 0)" => "0"),
+            rewrite!("mul-1"; "(mul ?a 1)" => "?a"),
+
+            rewrite!("eq-t0"; "(eq ?a ?a)" => "1"),
+
+            rewrite!("slt-f0"; "(slt ?a ?a)" => "0"),
+
+            rewrite!("lt-f0"; "(lt ?a 0)" => "0"),
+            rewrite!("lt-f1"; "(lt ?a ?a)" => "0"),
+
+            rewrite!("type-0"; "(type 0 ?t)" => "0"),
+            rewrite!("pop-count-0"; "(pop-count 0)" => "0"),
+
+            rewrite!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
+            rewrite!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
+            rewrite!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
+        ];
+
+        let mut runner = Runner::default()
+            .with_egraph(graph);
+
+        runner.roots = roots.clone();
+
+        let runner = runner.run(rules.iter());
+        let egraph = runner.egraph;
+
+        let mut extractor = Extractor::new(&egraph, AstSize);
+        runner.roots.into_iter().map(|root| {
+            let (_best_cost, best) = extractor.find_best(root);
+            best
+        })
+        .collect()
     }
 }
 

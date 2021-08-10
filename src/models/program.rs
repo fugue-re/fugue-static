@@ -1,13 +1,12 @@
 use fugue::db::Database;
 
 use fugue::ir::Translator;
-use fugue::ir::il::ecode::{BranchTarget, EntityId, Entity, Stmt};
-
-use std::collections::HashMap;
+use fugue::ir::il::ecode::{BranchTarget, EntityId, Stmt};
 
 use crate::models::Block;
 use crate::models::CFG;
 use crate::models::{Function, FunctionLifter};
+use crate::types::EntityMap;
 
 use thiserror::Error;
 
@@ -21,8 +20,8 @@ pub enum Error {
 pub struct Program<'db> {
     database: &'db Database,
     translator: Translator,
-    functions: HashMap<EntityId, Entity<Function>>,
-    blocks: HashMap<EntityId, Entity<Block>>,
+    functions: EntityMap<Function>,
+    blocks: EntityMap<Block>,
 }
 
 impl<'db> Program<'db> {
@@ -30,8 +29,8 @@ impl<'db> Program<'db> {
         let trans = database.default_translator();
         let mut function_lifter = FunctionLifter::new(&trans);
 
-        let mut functions = HashMap::new();
-        let mut blocks = HashMap::new();
+        let mut functions = EntityMap::default();
+        let mut blocks = EntityMap::default();
 
         for f in database.functions() {
             let (fcn, blks) = function_lifter.from_function(f)?;

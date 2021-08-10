@@ -1,7 +1,7 @@
 use fugue::ir::il::ecode::{Expr, Stmt, Var};
 use std::collections::HashSet;
 
-use crate::traits::Visit;
+use crate::traits::{Visit, VisitMut};
 
 pub trait Variables {
     fn defined_variables(&self) -> HashSet<&Var> {
@@ -29,6 +29,14 @@ pub trait Variables {
     }
 }
 
+pub trait VariablesMut {
+    fn defined_variables_mut<F>(&mut self, f: F)
+        where F: FnMut(&mut Var);
+
+    fn used_variables_mut<F>(&mut self, f: F)
+        where F: FnMut(&mut Var);
+}
+
 impl Variables for Stmt {
     fn defined_variables_with<'ecode>(&'ecode self, vars: &mut HashSet<&'ecode Var>) {
         struct VisitDefs<'a, 'ecode>(&'a mut HashSet<&'ecode Var>);
@@ -54,5 +62,35 @@ impl Variables for Stmt {
 
         let mut visitor = VisitUses(vars);
         visitor.visit_stmt(self);
+    }
+}
+
+impl VariablesMut for Stmt {
+    fn defined_variables_mut<F>(&mut self, f: F)
+    where F: FnMut(&mut Var) {
+        struct VisitDefs<F: FnMut(&mut Var)>(F);
+
+        impl<F> VisitMut for VisitDefs<F> where F: FnMut(&mut Var) {
+            fn visit_stmt_assign_mut(&mut self, var: &mut Var, _expr: &mut Expr) {
+                self.0(var)
+            }
+        }
+
+        let mut visitor = VisitDefs(f);
+        visitor.visit_stmt_mut(self);
+    }
+
+    fn used_variables_mut<F>(&mut self, f: F)
+    where F: FnMut(&mut Var) {
+        struct VisitUses<F: FnMut(&mut Var)>(F);
+
+        impl<F> VisitMut for VisitUses<F> where F: FnMut(&mut Var) {
+            fn visit_expr_var_mut(&mut self, var: &mut Var) {
+                self.0(var)
+            }
+        }
+
+        let mut visitor = VisitUses(f);
+        visitor.visit_stmt_mut(self);
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use fugue::db::BasicBlock;
 
@@ -18,6 +18,7 @@ pub enum Error {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Block {
+    phis: BTreeMap<Var, Vec<Var>>,
     operations: Vec<Entity<Stmt>>,
     next_block: EntityId,
 }
@@ -50,6 +51,14 @@ impl Block {
     pub fn last_mut(&mut self) -> &mut Entity<Stmt> {
         let offset = self.operations.len() - 1;
         &mut self.operations[offset]
+    }
+
+    pub fn phis(&self) -> &BTreeMap<Var, Vec<Var>> {
+        &self.phis
+    }
+
+    pub fn phis_mut(&mut self) -> &mut BTreeMap<Var, Vec<Var>> {
+        &mut self.phis
     }
 
     pub fn operations(&self) -> &[Entity<Stmt>] {
@@ -181,6 +190,7 @@ impl<'trans> BlockLifter<'trans> {
             for start in local_targets.into_iter() {
                 let block = Block {
                     operations: operations.split_off(start),
+                    phis: Default::default(),
                     next_block: EntityId::new("blk", last_location),
                 };
                 last_location = block.location().clone();
@@ -193,6 +203,7 @@ impl<'trans> BlockLifter<'trans> {
                 } else {
                     operations
                 },
+                phis: Default::default(),
                 next_block: EntityId::new("blk", last_location),
             }));
 

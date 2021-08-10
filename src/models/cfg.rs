@@ -1,7 +1,10 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use petgraph::stable_graph::{NodeIndex, StableDiGraph as Graph};
 use petgraph::EdgeDirection;
+use petgraph::algo::dominators;
+use petgraph::stable_graph::{NodeIndex, StableDiGraph as Graph};
+use petgraph::visit::IntoNodeReferences;
 
 use fugue::ir::il::ecode::{Entity, EntityId, Location, Stmt};
 
@@ -10,8 +13,8 @@ use crate::models::Block;
 
 #[derive(Debug, Clone)]
 pub enum Edge<'a> {
-    Call(&'a Entity<Stmt>),
-    Jump(Option<&'a Entity<Stmt>>),
+    Call(Cow<'a, Entity<Stmt>>),
+    Jump(Option<Cow<'a, Entity<Stmt>>>),
 }
 
 impl<'a> Edge<'a> {
@@ -24,25 +27,16 @@ impl<'a> Edge<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Node<'a> {
-    BlockStart(&'a Entity<Block>),
-    BlockEnd(&'a Entity<Block>),
-}
+pub type Node<'a> = Cow<'a, Entity<Block>>;
 
-impl<'a> Node<'a> {
-    pub fn block(&self) -> &'a Entity<Block> {
-        match self {
-            Self::BlockStart(blk) | Self::BlockEnd(blk) => blk,
-        }
-    }
-}
+pub type CFGDominanceFrontier = HashMap<NodeIndex<u32>, HashSet<NodeIndex<u32>>>;
+pub type CFGDominanceTree = Graph<NodeIndex<u32>, ()>;
 
 #[derive(Clone, Default)]
 pub struct CFG<'a> {
     graph: Graph<Node<'a>, Edge<'a>>,
-    entry_points: HashSet<EntityId>,
-    entity_mapping: HashMap<EntityId, (NodeIndex<u32>, NodeIndex<u32>)>,
+    entry_points: HashSet<(EntityId, NodeIndex<u32>)>,
+    entity_mapping: HashMap<EntityId, NodeIndex<u32>>,
 }
 
 impl<'a> CFG<'a> {
@@ -58,20 +52,51 @@ impl<'a> CFG<'a> {
         self.graph.edge_count()
     }
 
-    pub fn get_block<L: Into<Location>>(&self, location: L) -> Option<&'a Entity<Block>> {
+    /// Corresponds to the first entry point added
+    pub fn default_entry(&self) -> Option<NodeIndex<u32>> {
+        self.entry_points.iter().next().map(|(_, idx)| *idx)
+    }
+
+    pub fn block<L: Into<Location>>(&self, location: L) -> Option<(NodeIndex<u32>, &Node<'a>)> {
         let id = EntityId::new("blk", location.into());
-        let (blk_start, _) = self.entity_mapping.get(&id)?;
-        self.graph.node_weight(*blk_start)
-            .map(Node::block)
+        let eid = *self.entity_mapping.get(&id)?;
+        Some((eid, self.graph.node_weight(eid)?))
+    }
+
+    pub fn block_mut<L: Into<Location>>(&mut self, location: L) -> Option<(NodeIndex<u32>, &mut Node<'a>)> {
+        let id = EntityId::new("blk", location.into());
+        let eid = *self.entity_mapping.get(&id)?;
+        Some((eid, self.graph.node_weight_mut(eid)?))
+    }
+
+    pub fn blocks(&self) -> impl Iterator<Item=(NodeIndex<u32>, &Node<'a>)> {
+        self.graph().node_references()
+    }
+
+    pub fn graph(&self) -> &Graph<Node<'a>, Edge<'a>> {
+        &self.graph
+    }
+
+    pub fn graph_mut(&mut self) -> &mut Graph<Node<'a>, Edge<'a>> {
+        &mut self.graph
+    }
+
+    pub fn map_blocks<F, G>(&self, nodef: F) -> Self
+    where F: FnMut(NodeIndex<u32>, &Node<'a>) -> Node<'a> {
+        Self {
+            graph: self.graph.map(nodef, |_, v| v.clone()),
+            entry_points: self.entry_points.clone(),
+            entity_mapping: self.entity_mapping.clone(),
+        }
     }
 
     pub fn with_preds<L, O, F>(&self, location: L, mut f: F) -> Option<O>
     where L: Into<Location>,
           O: Default,
-          F: FnMut(O, &'a Entity<Block>, Edge<'a>) -> O {
+          F: FnMut(O, &Cow<'a, Entity<Block>>, &Edge<'a>) -> O {
 
         let id = EntityId::new("blk", location.into());
-        let (blk_start, _) = self.entity_mapping.get(&id)?;
+        let blk_start = self.entity_mapping.get(&id)?;
 
         let mut walker = self.graph
             .neighbors_directed(*blk_start, EdgeDirection::Incoming)
@@ -79,10 +104,10 @@ impl<'a> CFG<'a> {
 
         let mut out = O::default();
         while let Some((ex, nx)) = walker.next(&self.graph) {
-            let node = self.graph.node_weight(nx).unwrap().block();
+            let node = self.graph.node_weight(nx).unwrap();
             let edge = self.graph.edge_weight(ex).unwrap();
 
-            out = f(out, node, edge.clone());
+            out = f(out, node, edge);
         }
         Some(out)
     }
@@ -90,10 +115,10 @@ impl<'a> CFG<'a> {
     pub fn with_succs<L, O, F>(&self, location: L, mut f: F) -> Option<O>
     where L: Into<Location>,
           O: Default,
-          F: FnMut(O, &'a Entity<Block>, Edge<'a>) -> O {
+          F: FnMut(O, &Cow<'a, Entity<Block>>, &Edge<'a>) -> O {
 
         let id = EntityId::new("blk", location.into());
-        let (_, blk_end) = self.entity_mapping.get(&id)?;
+        let blk_end = self.entity_mapping.get(&id)?;
 
         let mut walker = self.graph
             .neighbors_directed(*blk_end, EdgeDirection::Outgoing)
@@ -101,51 +126,107 @@ impl<'a> CFG<'a> {
 
         let mut out = O::default();
         while let Some((ex, nx)) = walker.next(&self.graph) {
-            let node = self.graph.node_weight(nx).unwrap().block();
+            let node = self.graph.node_weight(nx).unwrap();
             let edge = self.graph.edge_weight(ex).unwrap();
 
-            out = f(out, node, edge.clone());
+            out = f(out, node, edge);
         }
         Some(out)
     }
 
-    pub fn add_block(&mut self, block: &'a Entity<Block>) -> (NodeIndex<u32>, NodeIndex<u32>) {
-        if let Some(idxs) = self.entity_mapping.get(block.id()) {
-            *idxs
+    pub fn add_entry(&mut self, block: &'a Entity<Block>) -> NodeIndex<u32> {
+        let idx = self.add_block(block);
+        self.entry_points.insert((block.id().clone(), idx));
+        idx
+    }
+
+    pub fn add_block(&mut self, block: &'a Entity<Block>) -> NodeIndex<u32> {
+        if let Some(idx) = self.entity_mapping.get(block.id()) {
+            *idx
         } else {
-            let sidx = self.graph.add_node(Node::BlockStart(block));
-            let eidx = self.graph.add_node(Node::BlockEnd(block));
-
-            let idxs = (sidx, eidx);
-
-            self.entity_mapping.insert(block.id().clone(), idxs);
-
-            idxs
+            let id = block.id().clone();
+            let idx = self.graph.add_node(Cow::Borrowed(block));
+            self.entity_mapping.insert(id, idx);
+            idx
         }
     }
 
     pub fn add_call(&mut self, blk: &'a Entity<Block>, fcn: &'a Entity<Block>, via: &'a Entity<Stmt>) {
-        let (_, blk_end) = self.entity_mapping[blk.id()];
-        let (fcn_start, _) = self.entity_mapping[fcn.id()];
+        let blk_end = self.entity_mapping[blk.id()];
+        let fcn_start = self.entity_mapping[fcn.id()];
 
-        self.graph.add_edge(blk_end, fcn_start, Edge::Call(via));
+        self.graph.add_edge(blk_end, fcn_start, Edge::Call(Cow::Borrowed(via)));
     }
 
     pub fn add_cond(&mut self, blk: &'a Entity<Block>, tgt: &'a Entity<Block>) {
-        let (_, blk_end) = self.entity_mapping[blk.id()];
-        let (blk_start, _) = self.entity_mapping[tgt.id()];
+        let blk_end = self.entity_mapping[blk.id()];
+        let blk_start = self.entity_mapping[tgt.id()];
 
-        let (fall_start, _) = self.entity_mapping[blk.value().next_block()];
+        let fall_start = self.entity_mapping[blk.value().next_block()];
 
-        self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(blk.value().last())));
+        self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(Cow::Borrowed(blk.value().last()))));
         self.graph.add_edge(blk_end, fall_start, Edge::Jump(None));
     }
 
     pub fn add_jump(&mut self, blk: &'a Entity<Block>, tgt: &'a Entity<Block>) {
-        let (_, blk_end) = self.entity_mapping[blk.id()];
-        let (blk_start, _) = self.entity_mapping[tgt.id()];
+        let blk_end = self.entity_mapping[blk.id()];
+        let blk_start = self.entity_mapping[tgt.id()];
 
-        self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(blk.value().last())));
+        self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(Cow::Borrowed(blk.value().last()))));
+    }
+
+    pub fn dominance_tree(&self) -> CFGDominanceTree {
+        if self.entry_points.len() > 1 {
+            panic!("dominance tree for multiple entry points")
+        }
+
+        let entry = self.default_entry().unwrap();
+
+        let mut tree = Graph::default();
+        let dominators = dominators::simple_fast(&self.graph, entry);
+
+        for d in self.graph.node_indices() {
+            tree.add_node(d);
+        }
+
+        for d in self.graph.node_indices().rev() {
+            if let Some(idom) = dominators.immediate_dominator(d) {
+                tree.add_edge(idom, d, ());
+            }
+        }
+
+        tree
+    }
+
+    pub fn dominance_frontier(&self) -> CFGDominanceFrontier {
+        if self.entry_points.len() > 1 {
+            panic!("dominance frontier for multiple entry points")
+        }
+
+        let entry = self.default_entry().unwrap();
+
+        let mut mapping = HashMap::default();
+        let dominators = dominators::simple_fast(&self.graph, entry);
+        for d in self.graph.node_indices() {
+            let idom = if let Some(idom) = dominators.immediate_dominator(d) {
+                idom
+            } else {
+                continue
+            };
+
+            for mut np in self.graph.neighbors_directed(d, EdgeDirection::Incoming) {
+                while np != idom {
+                    mapping.entry(np).or_insert_with(HashSet::default).insert(d);
+                    np = if let Some(np_dom) = dominators.immediate_dominator(np) {
+                        np_dom
+                    } else {
+                        break
+                    }
+                }
+            }
+        }
+
+        mapping
     }
 }
 

@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use fugue::db;
 
 use fugue::ir::Translator;
-use fugue::ir::il::ecode::{Entity, EntityId, Location};
+use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
 
-use crate::models::{Block, BlockLifter};
+use crate::models::{Block, BlockLifter, CFG, Program};
 
 use thiserror::Error;
 
@@ -38,6 +38,38 @@ impl Function {
     pub fn blocks_mut(&mut self) -> &mut HashSet<EntityId> {
         &mut self.blocks
     }
+
+    pub fn cfg<'db>(&self, program: &'db Program) -> CFG<'db> {
+        let mut cfg = CFG::new();
+
+        let blks = program.blocks();
+        for blkid in self.blocks.iter() {
+            let blk = &blks[blkid];
+            if blk.location() == self.location() {
+                cfg.add_entry(blk);
+            } else {
+                cfg.add_block(blk);
+            }
+        }
+
+        for blkid in self.blocks.iter() {
+            let blk = &blks[blkid];
+            match blk.value().last().value() {
+                Stmt::CBranch(_, BranchTarget::Location(location)) => {
+                    let tgt_id = EntityId::new("blk", location.clone());
+                    let tgt = &blks[&tgt_id];
+                    cfg.add_cond(blk, tgt);
+                },
+                Stmt::Branch(BranchTarget::Location(location)) => {
+                    let tgt_id = EntityId::new("blk", location.clone());
+                    let tgt = &blks[&tgt_id];
+                    cfg.add_jump(blk, tgt);
+                },
+                _ => (),
+            }
+        }
+        cfg
+    }
 }
 
 pub struct FunctionLifter<'trans> {
@@ -53,7 +85,7 @@ impl<'trans> FunctionLifter<'trans> {
         }
     }
 
-    pub(crate) fn from_function(&mut self, f: &db::Function) -> Result<(Entity<Function>, Vec<Entity<Block>>), Error> {
+    pub fn from_function(&mut self, f: &db::Function) -> Result<(Entity<Function>, Vec<Entity<Block>>), Error> {
         let mut blocks = Vec::new();
         let mut function = Function {
             symbol: f.name().to_string(),

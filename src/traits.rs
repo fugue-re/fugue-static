@@ -1,6 +1,9 @@
 pub mod stmt;
 pub use stmt::StmtExt;
 
+pub mod entity;
+pub use entity::IntoEntityCow;
+
 pub mod variables;
 pub use variables::{Variables, VariablesMut};
 

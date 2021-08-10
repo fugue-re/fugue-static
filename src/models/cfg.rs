@@ -10,6 +10,7 @@ use fugue::ir::il::ecode::{Entity, EntityId, Location, Stmt};
 
 use crate::graphs::orders::{PostOrder, RevPostOrder};
 use crate::models::Block;
+use crate::traits::IntoEntityCow;
 
 #[derive(Debug, Clone)]
 pub enum Edge<'a> {
@@ -134,45 +135,75 @@ impl<'a> CFG<'a> {
         Some(out)
     }
 
-    pub fn add_entry(&mut self, block: &'a Entity<Block>) -> NodeIndex<u32> {
+    pub fn add_entry<T: IntoEntityCow<'a, T=Block>>(&mut self, block: T) -> NodeIndex<u32> {
+        let block = block.into_entity_cow();
+        let id = block.id().clone();
         let idx = self.add_block(block);
-        self.entry_points.insert((block.id().clone(), idx));
+        self.entry_points.insert((id, idx));
         idx
     }
 
-    pub fn add_block(&mut self, block: &'a Entity<Block>) -> NodeIndex<u32> {
+    pub fn add_block<T: IntoEntityCow<'a, T=Block>>(&mut self, block: T) -> NodeIndex<u32> {
+        let block = block.into_entity_cow();
         if let Some(idx) = self.entity_mapping.get(block.id()) {
             *idx
         } else {
             let id = block.id().clone();
-            let idx = self.graph.add_node(Cow::Borrowed(block));
+            let idx = self.graph.add_node(block);
             self.entity_mapping.insert(id, idx);
             idx
         }
     }
 
-    pub fn add_call(&mut self, blk: &'a Entity<Block>, fcn: &'a Entity<Block>, via: &'a Entity<Stmt>) {
+    pub fn add_call<B, F, V>(&mut self, blk: B, fcn: F, via: V)
+    where B: IntoEntityCow<'a, T=Block>,
+          F: IntoEntityCow<'a, T=Block>,
+          V: IntoEntityCow<'a, T=Stmt> {
+        let blk = blk.into_entity_cow();
+        let fcn = fcn.into_entity_cow();
+        let via = via.into_entity_cow();
+
         let blk_end = self.entity_mapping[blk.id()];
         let fcn_start = self.entity_mapping[fcn.id()];
 
-        self.graph.add_edge(blk_end, fcn_start, Edge::Call(Cow::Borrowed(via)));
+        self.graph.add_edge(blk_end, fcn_start, Edge::Call(via));
     }
 
-    pub fn add_cond(&mut self, blk: &'a Entity<Block>, tgt: &'a Entity<Block>) {
+    pub fn add_cond<B, T>(&mut self, blk: B, tgt: T)
+    where B: IntoEntityCow<'a, T=Block>,
+          T: IntoEntityCow<'a, T=Block> {
+        let blk = blk.into_entity_cow();
+        let tgt = tgt.into_entity_cow();
+
         let blk_end = self.entity_mapping[blk.id()];
         let blk_start = self.entity_mapping[tgt.id()];
 
         let fall_start = self.entity_mapping[blk.value().next_block()];
 
-        self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(Cow::Borrowed(blk.value().last()))));
+        let jump = match blk {
+            Cow::Borrowed(b) => Cow::Borrowed(b.last()),
+            Cow::Owned(b) => Cow::Owned(b.last().clone()),
+        };
+
+        self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(jump)));
         self.graph.add_edge(blk_end, fall_start, Edge::Jump(None));
     }
 
-    pub fn add_jump(&mut self, blk: &'a Entity<Block>, tgt: &'a Entity<Block>) {
+    pub fn add_jump<B, T>(&mut self, blk: B, tgt: T)
+    where B: IntoEntityCow<'a, T=Block>,
+          T: IntoEntityCow<'a, T=Block> {
+        let blk = blk.into_entity_cow();
+        let tgt = tgt.into_entity_cow();
+
         let blk_end = self.entity_mapping[blk.id()];
         let blk_start = self.entity_mapping[tgt.id()];
 
-        self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(Cow::Borrowed(blk.value().last()))));
+        let jump = match blk {
+            Cow::Borrowed(b) => Cow::Borrowed(b.last()),
+            Cow::Owned(b) => Cow::Owned(b.last().clone()),
+        };
+
+        self.graph.add_edge(blk_end, blk_start, Edge::Jump(Some(jump)));
     }
 
     pub fn dominance_tree(&self) -> CFGDominanceTree {

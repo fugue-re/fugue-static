@@ -22,7 +22,6 @@ pub enum Type {
     Float(usize),
 }
 
-
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use petgraph::stable_graph::{NodeIndex, StableDiGraph as Graph};
 use petgraph::EdgeDirection;
-use petgraph::visit::{Dfs, DfsPostOrder, Reversed};
 
 use fugue::ir::il::ecode::{Entity, EntityId, Location, Stmt};
 
+use crate::graphs::orders::{PostOrder, RevPostOrder};
 use crate::models::Block;
 
 #[derive(Debug, Clone)]
@@ -39,13 +39,13 @@ impl<'a> Node<'a> {
 }
 
 #[derive(Clone, Default)]
-pub struct ICFG<'a> {
+pub struct CFG<'a> {
     graph: Graph<Node<'a>, Edge<'a>>,
     entry_points: HashSet<EntityId>,
     entity_mapping: HashMap<EntityId, (NodeIndex<u32>, NodeIndex<u32>)>,
 }
 
-impl<'a> ICFG<'a> {
+impl<'a> CFG<'a> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -150,45 +150,45 @@ impl<'a> ICFG<'a> {
 }
 
 #[derive(Clone)]
-pub struct PreOrderIterator<'a, 'b> {
-    icfg: &'b ICFG<'a>,
-    visitor: Dfs<NodeIndex<u32>, HashSet<NodeIndex<u32>>>,
+pub struct PostOrderIterator<'a, 'b> {
+    cfg: &'b CFG<'a>,
+    visitor: PostOrder<NodeIndex<u32>>,
 }
 
-impl<'a, 'b> Iterator for PreOrderIterator<'a, 'b> {
+impl<'a, 'b> Iterator for PostOrderIterator<'a, 'b> {
     type Item = &'b Node<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.visitor.next(&self.icfg.graph)
-            .and_then(|id| self.icfg.graph.node_weight(id))
+        self.visitor.next(&self.cfg.graph)
+            .and_then(|id| self.cfg.graph.node_weight(id))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         (
             self.visitor.stack.len(),
-            Some(self.icfg.node_count() - self.visitor.discovered.len()),
+            Some(self.cfg.node_count() - self.visitor.finished.len()),
         )
     }
 }
 
 #[derive(Clone)]
 pub struct RevPostOrderIterator<'a, 'b> {
-    icfg: &'b ICFG<'a>,
-    visitor: DfsPostOrder<NodeIndex<u32>, HashSet<NodeIndex<u32>>>,
+    cfg: &'b CFG<'a>,
+    visitor: RevPostOrder<NodeIndex<u32>>,
 }
 
 impl<'a, 'b> Iterator for RevPostOrderIterator<'a, 'b> {
     type Item = &'b Node<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.visitor.next(Reversed(&self.icfg.graph))
-            .and_then(|id| self.icfg.graph.node_weight(id))
+        self.visitor.next(&self.cfg.graph)
+            .and_then(|id| self.cfg.graph.node_weight(id))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         (
             self.visitor.stack.len(),
-            Some(self.icfg.node_count() - self.visitor.finished.len()),
+            Some(self.cfg.node_count() - self.visitor.finished.len()),
         )
     }
 }

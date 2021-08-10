@@ -6,8 +6,8 @@ use fugue::ir::il::ecode::{BranchTarget, EntityId, Entity, Stmt};
 use std::collections::HashMap;
 
 use crate::models::Block;
+use crate::models::CFG;
 use crate::models::{Function, FunctionLifter};
-use crate::models::ICFG;
 
 use thiserror::Error;
 
@@ -49,8 +49,8 @@ impl<'db> Program<'db> {
         })
     }
 
-    pub fn icfg(&self) -> ICFG {
-        let mut icfg = ICFG::new();
+    pub fn icfg(&self) -> CFG {
+        let mut icfg = CFG::new();
 
         // add all blocks
         for blk in self.blocks.values() {

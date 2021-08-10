@@ -1,6 +1,9 @@
 pub mod stmt;
 pub use stmt::StmtExt;
 
+pub mod variables;
+pub use variables::Variables;
+
 pub mod visitor;
 pub use visitor::Visit;
 

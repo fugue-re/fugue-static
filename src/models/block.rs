@@ -4,7 +4,7 @@ use fugue::db::BasicBlock;
 
 use fugue::ir::Translator;
 use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
+use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt, Var};
 
 use thiserror::Error;
 
@@ -58,6 +58,32 @@ impl Block {
 
     pub fn operations_mut(&mut self) -> &mut [Entity<Stmt>] {
         &mut self.operations
+    }
+}
+
+impl Variables for Block {
+    // i.e. all vars that are a target of an assignment
+    fn defined_variables_with<'ecode>(&'ecode self, defs: &mut HashSet<&'ecode Var>) {
+        for stmt in self.operations.iter().map(|v| v.value()) {
+            stmt.defined_variables_with(defs);
+        }
+    }
+
+    // i.e. all vars used without first being defined aka free vars
+    fn used_variables_with<'ecode>(&'ecode self, uses: &mut HashSet<&'ecode Var>) {
+        let mut defs = HashSet::default();
+        self.defined_and_used_variables_with(&mut defs, uses)
+    }
+
+    fn defined_and_used_variables_with<'ecode>(&'ecode self, defs: &mut HashSet<&'ecode Var>, uses: &mut HashSet<&'ecode Var>) {
+        let mut ldefs = HashSet::default();
+        let mut luses = HashSet::default();
+
+        for stmt in self.operations.iter().map(|v| v.value()) {
+            stmt.defined_and_used_variables_with(&mut ldefs, &mut luses);
+            uses.extend(luses.difference(&defs));
+            defs.extend(ldefs.drain());
+        }
     }
 }
 

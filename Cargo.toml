@@ -5,9 +5,12 @@ authors = ["Sam Thomas <st@xv.ax>"]
 edition = "2018"
 
 [dependencies]
+bincode = "1"
 egg = "0.6"
 fixedbitset = "0.4"
 fugue = { version = "0.2", registry = "fugue" }
 petgraph = "0.6"
+simhash = { version = "0.1", registry = "fugue" }
+serde = { version = "1", features = ["derive"] }
 smallvec = "1"
 thiserror = "1"

@@ -6,6 +6,7 @@ use fugue::ir::Translator;
 use fugue::ir::disassembly::ContextDatabase;
 use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt, Var};
 
+use simhash::SimHashable;
 use thiserror::Error;
 
 use crate::traits::*;
@@ -21,6 +22,13 @@ pub struct Block {
     phis: BTreeMap<Var, Vec<Var>>,
     operations: Vec<Entity<Stmt>>,
     next_block: EntityId,
+}
+
+impl SimHashable for Block {
+    fn simhash(&self) -> Result<simhash::SimHash, simhash::Error> {
+        let bytes = bincode::serialize(&self.operations).unwrap();
+        bytes.simhash()
+    }
 }
 
 impl Block {

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
+use std::fmt::{self, Debug, Display};
 
 use fugue::db::BasicBlock;
 
@@ -21,7 +22,30 @@ pub enum Error {
 pub struct Block {
     phis: BTreeMap<Var, Vec<Var>>,
     operations: Vec<Entity<Stmt>>,
-    next_block: EntityId,
+    next_blocks: Vec<EntityId>,
+}
+
+impl Display for Block {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (op, assign) in self.phis.iter() {
+            if assign.is_empty() {
+                // NOTE: should never happen
+                writeln!(f, "{} {} ← ϕ(<empty>)", self.location(), op)?;
+            } else {
+                write!(f, "{} {} ← ϕ({}", self.location(), op, assign[0])?;
+                for aop in &assign[1..] {
+                    write!(f, ", {}", aop)?;
+                }
+                writeln!(f, ")")?;
+            }
+        }
+
+        for stmt in self.operations.iter() {
+            writeln!(f, "{} {}", stmt.location(), stmt.value())?;
+        }
+
+        Ok(())
+    }
 }
 
 impl SimHashable for Block {
@@ -36,12 +60,12 @@ impl Block {
         self.first().location()
     }
 
-    pub fn next_block(&self) -> &EntityId {
-        &self.next_block
+    pub fn next_blocks(&self) -> impl Iterator<Item=&EntityId> {
+        self.next_blocks.iter()
     }
 
-    pub fn next_location(&self) -> &Location {
-        self.next_block.location()
+    pub fn next_location(&self) -> impl Iterator<Item=&Location> {
+        self.next_blocks.iter().map(|b| b.location())
     }
 
     pub fn first(&self) -> &Entity<Stmt> {
@@ -78,28 +102,64 @@ impl Block {
     }
 }
 
-impl Variables for Block {
+impl<'ecode> Variables<'ecode> for Block {
     // i.e. all vars that are a target of an assignment
-    fn defined_variables_with<'ecode>(&'ecode self, defs: &mut HashSet<&'ecode Var>) {
+    fn defined_variables_with<C>(&'ecode self, defs: &mut C)
+    where C: ValueRefCollector<'ecode, Var> {
         for stmt in self.operations.iter().map(|v| v.value()) {
             stmt.defined_variables_with(defs);
         }
     }
 
     // i.e. all vars used without first being defined aka free vars
-    fn used_variables_with<'ecode>(&'ecode self, uses: &mut HashSet<&'ecode Var>) {
-        let mut defs = HashSet::default();
+    fn used_variables_with<C>(&'ecode self, uses: &mut C)
+    where C: ValueRefCollector<'ecode, Var> {
+        let mut defs = C::default();
         self.defined_and_used_variables_with(&mut defs, uses)
     }
 
-    fn defined_and_used_variables_with<'ecode>(&'ecode self, defs: &mut HashSet<&'ecode Var>, uses: &mut HashSet<&'ecode Var>) {
-        let mut ldefs = HashSet::default();
-        let mut luses = HashSet::default();
+    fn defined_and_used_variables_with<C>(&'ecode self, defs: &mut C, uses: &mut C)
+    where C: ValueRefCollector<'ecode, Var> {
+        let mut ldefs = C::default();
+        let mut luses = C::default();
 
         for stmt in self.operations.iter().map(|v| v.value()) {
             stmt.defined_and_used_variables_with(&mut ldefs, &mut luses);
-            uses.extend(luses.difference(&defs));
-            defs.extend(ldefs.drain());
+
+            luses.retain_difference_ref(&defs);
+
+            uses.merge_ref(&mut luses);
+            defs.merge_ref(&mut ldefs);
+        }
+    }
+
+    // i.e. all vars that are a target of an assignment
+    fn defined_variables_mut_with<C>(&'ecode mut self, defs: &mut C)
+    where C: ValueMutCollector<'ecode, Var> {
+        for stmt in self.operations.iter_mut().map(|v| v.value_mut()) {
+            stmt.defined_variables_mut_with(defs);
+        }
+    }
+
+    // i.e. all vars used without first being defined aka free vars
+    fn used_variables_mut_with<C>(&'ecode mut self, uses: &mut C)
+    where C: ValueMutCollector<'ecode, Var> {
+        let mut defs = C::default();
+        self.defined_and_used_variables_mut_with(&mut defs, uses)
+    }
+
+    fn defined_and_used_variables_mut_with<C>(&'ecode mut self, defs: &mut C, uses: &mut C)
+    where C: ValueMutCollector<'ecode, Var> {
+        let mut ldefs = C::default();
+        let mut luses = C::default();
+
+        for stmt in self.operations.iter_mut().map(|v| v.value_mut()) {
+            stmt.defined_and_used_variables_mut_with(&mut ldefs, &mut luses);
+
+            luses.retain_difference_mut(&defs);
+
+            uses.merge_mut(&mut luses);
+            defs.merge_mut(&mut ldefs);
         }
     }
 }
@@ -199,7 +259,7 @@ impl<'trans> BlockLifter<'trans> {
                 let block = Block {
                     operations: operations.split_off(start),
                     phis: Default::default(),
-                    next_block: EntityId::new("blk", last_location),
+                    next_blocks: vec![EntityId::new("blk", last_location)],
                 };
                 last_location = block.location().clone();
                 local_blocks.push(Entity::new("blk", last_location.clone(), block));
@@ -212,7 +272,7 @@ impl<'trans> BlockLifter<'trans> {
                     operations
                 },
                 phis: Default::default(),
-                next_block: EntityId::new("blk", last_location),
+                next_blocks: vec![EntityId::new("blk", last_location)],
             }));
 
             blocks.extend(local_blocks.into_iter().rev());
@@ -226,7 +286,7 @@ impl<'trans> BlockLifter<'trans> {
                 let block = blocks.remove(index).into_value();
                 blocks[index - 1].value_mut().operations
                     .extend(block.operations.into_iter());
-                blocks[index - 1].value_mut().next_block = block.next_block;
+                blocks[index - 1].value_mut().next_blocks = block.next_blocks;
             }
         }
 

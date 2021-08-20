@@ -131,7 +131,7 @@ impl<'db> Program<'db> {
                 Stmt::Call(BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());
                     let tgt = &self.blocks[&tgt_id];
-                    icfg.add_call(blk, tgt, blk.value().last());
+                    icfg.add_call(blk, tgt);
                 },
                 Stmt::CBranch(_, BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());

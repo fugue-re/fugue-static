@@ -173,6 +173,16 @@ pub trait Visit<'ecode> {
     #[allow(unused)]
     fn visit_stmt_store_space(&mut self, space: &'ecode Arc<AddressSpace>) {}
 
+    fn visit_stmt_store_location(&mut self, expr: &'ecode Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
+        self.visit_stmt_store_size(size);
+        self.visit_stmt_store_space(space);
+        self.visit_expr(expr);
+    }
+
+    fn visit_stmt_store_value(&mut self, expr: &'ecode Expr) {
+        self.visit_expr(expr);
+    }
+
     fn visit_stmt_store(
         &mut self,
         loc: &'ecode Expr,
@@ -180,10 +190,8 @@ pub trait Visit<'ecode> {
         size: usize,
         space: &'ecode Arc<AddressSpace>,
     ) {
-        self.visit_expr(loc);
-        self.visit_stmt_store_size(size);
-        self.visit_stmt_store_space(space);
-        self.visit_expr(val)
+        self.visit_stmt_store_location(loc, size, space);
+        self.visit_stmt_store_value(val)
     }
 
     fn visit_stmt_branch(&mut self, branch_target: &'ecode BranchTarget) {

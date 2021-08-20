@@ -1,48 +1,57 @@
 use fixedbitset::FixedBitSet;
 
-use petgraph::algo::kosaraju_scc;
-use petgraph::Direction;
-use petgraph::graph::IndexType;
-use petgraph::visit::{IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, GraphRef, NodeCount, VisitMap, Visitable};
+use petgraph::graph::NodeIndex;
 
-/// Visit nodes in a depth-first-search (DFS) emitting nodes in postorder.
+use petgraph::algo::kosaraju_scc;
+use petgraph::graph::IndexType;
+use petgraph::visit::{IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, GraphRef, NodeCount, Reversed, VisitMap, Visitable};
+
+use std::collections::VecDeque;
+
+use crate::graphs::traversals::Traversal;
+use crate::types::EntityGraph;
+
+/// Visit nodes in a depth-first-search (DFS) emitting nodes in reverse postorder
+/// (each node after all its descendants have been emitted).
 ///
-/// The traversal starts at a "virtual" start node that is connected to the
-/// roots of all SCC sub-graphs.
+/// `RevPostOrder` is not recursive.
+///
+/// The traversal starts at a given node and only traverses nodes reachable
+/// from it.
 #[derive(Clone, Debug)]
-pub struct PostOrder<N> {
+pub struct RevPostOrder<N> {
     /// The stack of nodes to visit
     pub stack: Vec<Option<N>>,
     /// The map of discovered nodes
     pub discovered: FixedBitSet,
     /// The map of finished nodes
     pub finished: FixedBitSet,
-    /// Virtual start neighbours
-    pub start_neighbours: Vec<N>,
-    /// If the virtual start has been discovered
-    pub start_discovered: bool,
-    /// Strongly connected components of graph
+    /// Virtual end neighbours
+    pub end_neighbours: Vec<N>,
+    /// If the virtual end has been discovered
+    pub end_discovered: bool,
+    /// Strongly connected components
     pub scc: Vec<Vec<N>>,
 }
 
-impl<N> Default for PostOrder<N> {
+impl<N> Default for RevPostOrder<N> {
     fn default() -> Self {
-        Self {
-            stack: Vec::default(),
+        RevPostOrder {
+            stack: Vec::new(),
             discovered: FixedBitSet::default(),
             finished: FixedBitSet::default(),
-            start_neighbours: Vec::default(),
-            start_discovered: false,
+            end_neighbours: Vec::new(),
+            end_discovered: false,
             scc: Vec::default(),
         }
     }
 }
 
-impl<N> PostOrder<N>
+impl<N> RevPostOrder<N>
 where
-    N: IndexType
+    N: IndexType,
 {
-    /// Create a new `PostOrder` using the graph's visitor map, and put
+    /// Create a new `RevPostOrder` using the graph's visitor map, and put
     /// `start` in the stack of nodes to visit.
     pub fn new<G>(graph: G) -> Self
     where
@@ -58,27 +67,26 @@ where
         G: GraphRef + IntoNeighborsDirected + IntoNodeIdentifiers + Visitable<NodeId = N, Map = FixedBitSet>,
     {
         let mut scc = kosaraju_scc(&graph);
-
-        let start_neighbours = graph.node_identifiers()
-            .filter(|nx| graph.neighbors_directed(*nx, Direction::Incoming).next().is_none())
+        let end_neighbours = graph.node_identifiers()
+            .filter(|nx| graph.neighbors(*nx).next().is_none())
             .collect::<Vec<_>>();
 
-        let start = if start_neighbours.is_empty() {
+        let end = if end_neighbours.is_empty() {
             scc.pop().and_then(|mut cs| cs.pop())
         } else {
             None
         };
 
-        let order = PostOrder {
+        let order = RevPostOrder {
             stack: Vec::new(),
             discovered: graph.visit_map(),
             finished: graph.visit_map(),
-            start_neighbours,
-            start_discovered: false,
+            end_neighbours,
+            end_discovered: false,
             scc,
         };
 
-        (start, order)
+        (end, order)
     }
 
     fn move_to(&mut self, start: Option<N>) {
@@ -91,6 +99,8 @@ where
     where
         G: IntoNeighbors<NodeId = N> + NodeCount + IntoNeighborsDirected,
     {
+        let graph = Reversed(graph);
+
         'outer: loop {
             while let Some(&nx) = self.stack.last() {
                 if let Some(nx) = nx {
@@ -109,9 +119,9 @@ where
                         }
                     }
                 } else {
-                    if !self.start_discovered {
-                        self.start_discovered = true;
-                        for succ in self.start_neighbours.iter() {
+                    if !self.end_discovered {
+                        self.end_discovered = true;
+                        for succ in self.end_neighbours.iter().rev() {
                             if !self.discovered.is_visited(succ) {
                                 self.stack.push(Some(*succ));
                             }
@@ -134,5 +144,20 @@ where
             break
         }
         None
+    }
+}
+
+impl<'a> Traversal<'a> for RevPostOrder<NodeIndex> {
+    fn into_queue<E, G>(graph: G) -> VecDeque<NodeIndex>
+    where G: AsRef<EntityGraph<E>> + 'a {
+        let g = graph.as_ref();
+        let mut traversal = Self::new(g);
+        let mut queue = VecDeque::new();
+
+        while let Some(nx) = traversal.next(g) {
+            queue.push_back(nx);
+        }
+
+        queue
     }
 }

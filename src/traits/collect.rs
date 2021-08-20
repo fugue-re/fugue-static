@@ -1,5 +1,14 @@
 use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
+
+use fugue::ir::il::ecode::EntityId;
+
+pub trait EntityValueCollector<V>: Default {
+    fn get(&self, id: &EntityId) -> Option<&V>;
+    fn insert(&mut self, id: EntityId, value: V);
+    fn remove(&mut self, id: &EntityId) -> Option<V>;
+}
 
 pub trait ValueRefCollector<'ecode, V>: Default {
     fn insert_ref(&mut self, value: &'ecode V);
@@ -47,6 +56,23 @@ impl<'ecode, V> ValueMutCollector<'ecode, V> for Vec<&'ecode mut V> where V: Eq 
     }
 }
 
+impl<V> EntityValueCollector<V> for HashMap<EntityId, V> {
+    #[inline(always)]
+    fn get(&self, id: &EntityId) -> Option<&V> {
+        self.get(id)
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, id: EntityId, value: V) {
+        self.insert(id, value);
+    }
+
+    #[inline(always)]
+    fn remove(&mut self, id: &EntityId) -> Option<V> {
+        self.remove(id)
+    }
+}
+
 impl<'ecode, V> ValueRefCollector<'ecode, V> for HashSet<&'ecode V> where V: Eq + Hash {
     #[inline(always)]
     fn insert_ref(&mut self, var: &'ecode V) {
@@ -79,6 +105,23 @@ impl<'ecode, V> ValueMutCollector<'ecode, V> for HashSet<&'ecode mut V> where V:
     #[inline(always)]
     fn retain_difference_mut(&mut self, other: &Self) {
         self.retain(|v| !other.contains(v))
+    }
+}
+
+impl<V> EntityValueCollector<V> for BTreeMap<EntityId, V> {
+    #[inline(always)]
+    fn get(&self, id: &EntityId) -> Option<&V> {
+        self.get(id)
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, id: EntityId, value: V) {
+        self.insert(id, value);
+    }
+
+    #[inline(always)]
+    fn remove(&mut self, id: &EntityId) -> Option<V> {
+        self.remove(id)
     }
 }
 

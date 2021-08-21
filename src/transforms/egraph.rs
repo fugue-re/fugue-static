@@ -270,7 +270,10 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
     fn visit_expr_val(&mut self, bv: &'ecode BitVec) {
         use ECodeLanguage as L;
 
-        self.add(L::Value(bv.to_u64().unwrap_or(0)));
+        let val = self.graph.add(L::Value(bv.to_u64().unwrap_or(0)));
+        let siz = self.graph.add(L::Value(bv.bits() as u64));
+
+        self.add(L::Constant([val, siz]))
     }
 
     fn visit_expr_cast(&mut self, expr: &'ecode il::Expr, cast: &'ecode Cast) {

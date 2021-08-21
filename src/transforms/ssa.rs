@@ -206,7 +206,7 @@ fn transform_rename<'a>(
             for (var, _) in phi.iter() {
                 let generation = renamer.define(&mut gmapping, var.clone());
                 let nvar = var.with_generation(generation);
-                block.to_mut().value_mut().phis_mut().insert(nvar, Vec::new());
+                block.to_mut().value_mut().phis_mut().push((nvar, Vec::new()));
             }
         }
 

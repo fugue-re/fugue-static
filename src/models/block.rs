@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::{self, Debug, Display};
 
 use fugue::db::BasicBlock;
@@ -20,7 +20,7 @@ pub enum Error {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Block {
-    phis: BTreeMap<Var, Vec<Var>>,
+    phis: Vec<(Var, Vec<Var>)>,
     operations: Vec<Entity<Stmt>>,
     next_blocks: Vec<EntityId>,
 }
@@ -85,11 +85,11 @@ impl Block {
         &mut self.operations[offset]
     }
 
-    pub fn phis(&self) -> &BTreeMap<Var, Vec<Var>> {
+    pub fn phis(&self) -> &Vec<(Var, Vec<Var>)> {
         &self.phis
     }
 
-    pub fn phis_mut(&mut self) -> &mut BTreeMap<Var, Vec<Var>> {
+    pub fn phis_mut(&mut self) -> &mut Vec<(Var, Vec<Var>)> {
         &mut self.phis
     }
 
@@ -106,6 +106,10 @@ impl<'ecode> Variables<'ecode> for Block {
     // i.e. all vars that are a target of an assignment
     fn defined_variables_with<C>(&'ecode self, defs: &mut C)
     where C: ValueRefCollector<'ecode, Var> {
+        for (var, _) in self.phis.iter() {
+            defs.insert_ref(var);
+        }
+
         for stmt in self.operations.iter().map(|v| v.value()) {
             stmt.defined_variables_with(defs);
         }
@@ -123,6 +127,13 @@ impl<'ecode> Variables<'ecode> for Block {
         let mut ldefs = C::default();
         let mut luses = C::default();
 
+        for (lvar, rvars) in self.phis.iter() {
+            ldefs.insert_ref(lvar);
+            for rvar in rvars {
+                luses.insert_ref(rvar);
+            }
+        }
+
         for stmt in self.operations.iter().map(|v| v.value()) {
             stmt.defined_and_used_variables_with(&mut ldefs, &mut luses);
 
@@ -136,6 +147,10 @@ impl<'ecode> Variables<'ecode> for Block {
     // i.e. all vars that are a target of an assignment
     fn defined_variables_mut_with<C>(&'ecode mut self, defs: &mut C)
     where C: ValueMutCollector<'ecode, Var> {
+        for (var, _) in self.phis.iter_mut() {
+            defs.insert_mut(var);
+        }
+
         for stmt in self.operations.iter_mut().map(|v| v.value_mut()) {
             stmt.defined_variables_mut_with(defs);
         }
@@ -152,6 +167,13 @@ impl<'ecode> Variables<'ecode> for Block {
     where C: ValueMutCollector<'ecode, Var> {
         let mut ldefs = C::default();
         let mut luses = C::default();
+
+        for (lvar, rvars) in self.phis.iter_mut() {
+            ldefs.insert_mut(lvar);
+            for rvar in rvars {
+                luses.insert_mut(rvar);
+            }
+        }
 
         for stmt in self.operations.iter_mut().map(|v| v.value_mut()) {
             stmt.defined_and_used_variables_mut_with(&mut ldefs, &mut luses);

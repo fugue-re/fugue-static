@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use fugue::bv::BitVec;
 use fugue::ir::AddressSpace;
-use fugue::ir::il::ecode::{self as il, Cast, Location};
+use fugue::ir::il::ecode::{self as il, Cast, Location, Var};
 
 use egg::{define_language, EGraph, Id, Symbol};
 use egg::{rewrite, Analysis, AstSize, Extractor, RecExpr, Rewrite, Runner};
@@ -58,9 +58,12 @@ define_language! {
         "concat" = Concat([Id; 2]),
         "intrinsic" = Intrinsic(Vec<Id>),
 
-        "assign" = Assign([Id; 2]),
+        // "assign" = Assign([Id; 2]),
         "store" = Store([Id; 4]), // to * from * bits * space
         "load" = Load([Id; 3]), // from * bits * space
+        "phi" = Phi(Vec<Id>),
+
+        "skip" = Skip,
 
         "branch" = Branch(Id),
         "cbranch" = CBranch([Id; 2]),
@@ -231,17 +234,68 @@ impl Analysis<ECodeLanguage> for ConstantFolding {
     }
 }
 
-#[derive(Default)]
-struct ECodeRewriter {
+pub struct ECodeRewriter<'ecode> {
     graph: EGraph<ECodeLanguage, ConstantFolding>,
+    stmts: Vec<(Option<&'ecode Var>, Id, RecExpr<ECodeLanguage>)>,
+    rules: Vec<Rewrite<ECodeLanguage, ConstantFolding>>,
     last_id: Option<Id>, // stack ids for child nodes
 }
 
-impl ECodeRewriter {
+impl<'ecode> Default for ECodeRewriter<'ecode> {
+    fn default() -> Self {
+        let rules: Vec<Rewrite<ECodeLanguage, ConstantFolding>> = vec![
+            rewrite!("and-self"; "(and ?a ?a)" => "?a"),
+            rewrite!("and-0"; "(and ?a (constant 0 ?sz))" => "(constant 0 ?sz)"),
+
+            rewrite!("or-self"; "(or ?a ?a)" => "?a"),
+            rewrite!("xor-self"; "(xor (variable ?sp ?off ?sz ?gen) (variable ?sp ?off ?sz ?gen))" => "(constant 0 ?sz)"),
+
+            rewrite!("double-not"; "(not (not ?a))" => "?a"),
+
+            rewrite!("add-0"; "(add ?a (constant 0 ?sz))" => "?a"),
+            rewrite!("sub-0"; "(sub ?a (constant 0 ?sz))" => "?a"),
+            rewrite!("mul-0"; "(mul ?a (constant 0 ?sz))" => "(constant 0 ?sz)"),
+            rewrite!("mul-1"; "(mul ?a 1)" => "?a"),
+
+            rewrite!("eq-t0"; "(eq ?a ?a)" => "(constant 1 8)"),
+
+            rewrite!("slt-f0"; "(slt ?a ?a)" => "(constant 0 8)"),
+
+            rewrite!("lt-f0"; "(lt ?a 0)" => "(constant 0 8)"),
+            rewrite!("lt-f1"; "(lt ?a ?a)" => "(constant 0 8)"),
+
+            rewrite!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
+            rewrite!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
+            rewrite!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
+        ];
+
+        Self {
+            graph: Default::default(),
+            stmts: Vec::new(),
+            rules,
+            last_id: None,
+        }
+    }
+}
+
+impl<'ecode> ECodeRewriter<'ecode> {
     #[inline(always)]
     fn add(&mut self, e: ECodeLanguage) {
         let id = self.graph.add(e);
         self.insert_id(id);
+    }
+
+    #[inline(always)]
+    fn add_eff(&mut self, e: ECodeLanguage) {
+        let oid = self.graph.add(e);
+        self.simplify();
+
+        let mut ex = Extractor::new(&self.graph, AstSize);
+        let (_, rec) = ex.find_best(oid.clone());
+
+        self.stmts.push((None, oid.clone(), rec));
+
+        self.insert_id(oid)
     }
 
     #[inline(always)]
@@ -255,7 +309,7 @@ impl ECodeRewriter {
     }
 }
 
-impl<'ecode> Visit<'ecode> for ECodeRewriter {
+impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
     fn visit_expr_var(&mut self, var: &'ecode il::Var) {
         use ECodeLanguage as L;
 
@@ -438,15 +492,23 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
         self.add(L::Intrinsic(ids));
     }
 
-    fn visit_stmt_phi(&mut self, _var: &'ecode il::Var, _vars: &'ecode [il::Var]) {
-        /* ignore */
-    }
-
-    fn visit_stmt_assign(&mut self, var: &'ecode il::Var, expr: &'ecode il::Expr) {
+    fn visit_stmt_phi(&mut self, var: &'ecode il::Var, vars: &'ecode [il::Var]) {
         use ECodeLanguage as L;
 
-        self.visit_expr(expr);
-        let exid = self.take_id();
+        let mut varids = Vec::new();
+        for v in vars {
+            self.visit_expr_var(v);
+            varids.push(self.take_id());
+        }
+
+        let exid = self.graph.add(L::Phi(varids));
+
+        self.simplify();
+
+        let mut ex = Extractor::new(&self.graph, AstSize);
+        let (_, rec) = ex.find_best(exid.clone());
+
+        self.stmts.push((Some(var), exid.clone(), rec));
 
         let space = self.graph.add(L::Value(var.space().index() as u64));
         let offset = self.graph.add(L::Value(var.offset()));
@@ -455,7 +517,36 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
 
         let var = self.graph.add(L::Variable([space, offset, size, generation]));
 
-        self.add(L::Assign([var, exid]))
+        self.graph.union(var.clone(), exid);
+        self.graph.rebuild();
+
+        self.insert_id(var)
+    }
+
+    fn visit_stmt_assign(&mut self, var: &'ecode il::Var, expr: &'ecode il::Expr) {
+        use ECodeLanguage as L;
+
+        self.visit_expr(expr);
+        let exid = self.take_id();
+
+        self.simplify();
+
+        let mut ex = Extractor::new(&self.graph, AstSize);
+        let (_, rec) = ex.find_best(exid.clone());
+
+        self.stmts.push((Some(var), exid.clone(), rec));
+
+        let space = self.graph.add(L::Value(var.space().index() as u64));
+        let offset = self.graph.add(L::Value(var.offset()));
+        let size = self.graph.add(L::Value(var.bits() as u64));
+        let generation = self.graph.add(L::Value(var.generation() as u64));
+
+        let var = self.graph.add(L::Variable([space, offset, size, generation]));
+
+        self.graph.union(var.clone(), exid);
+        self.graph.rebuild();
+
+        self.insert_id(var)
     }
 
     fn visit_stmt_store(&mut self, loc: &'ecode il::Expr, val: &'ecode il::Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
@@ -470,7 +561,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
         let szid = self.graph.add(L::Value(size as u64));
         let spid = self.graph.add(L::Value(space.index() as u64));
 
-        self.add(L::Store([locid, valid, szid, spid]))
+        self.add_eff(L::Store([locid, valid, szid, spid]));
     }
 
     fn visit_stmt_intrinsic(&mut self, name: &'ecode str, args: &'ecode [il::Expr]) {
@@ -486,7 +577,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
             ids.push(self.take_id());
         }
 
-        self.add(ECodeLanguage::Intrinsic(ids));
+        self.add_eff(ECodeLanguage::Intrinsic(ids));
     }
 
     fn visit_branch_target_location(&mut self, location: &'ecode Location) {
@@ -504,7 +595,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
 
         self.visit_branch_target(branch_target);
         let tid = self.take_id();
-        self.add(L::Branch(tid))
+        self.add_eff(L::Branch(tid))
     }
 
     fn visit_stmt_cbranch(&mut self, cond: &'ecode il::Expr, branch_target: &'ecode il::BranchTarget) {
@@ -516,7 +607,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
         self.visit_branch_target(branch_target);
         let tid = self.take_id();
 
-        self.add(L::CBranch([exid, tid]))
+        self.add_eff(L::CBranch([exid, tid]))
     }
 
     fn visit_stmt_call(&mut self, branch_target: &'ecode il::BranchTarget) {
@@ -524,7 +615,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
 
         self.visit_branch_target(branch_target);
         let tid = self.take_id();
-        self.add(L::Call(tid))
+        self.add_eff(L::Call(tid))
     }
 
     fn visit_stmt_return(&mut self, branch_target: &'ecode il::BranchTarget) {
@@ -532,74 +623,42 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter {
 
         self.visit_branch_target(branch_target);
         let tid = self.take_id();
-        self.add(L::Return(tid))
+        self.add_eff(L::Return(tid))
+    }
+
+    fn visit_stmt_skip(&mut self) {
+        use ECodeLanguage as L;
+        self.add_eff(L::Skip);
     }
 }
 
-impl ECodeLanguage {
-    pub fn from_stmt(stmt: &il::Stmt) -> (Id, EGraph<ECodeLanguage, ConstantFolding>) {
-        let mut visit = ECodeRewriter::default();
-
-        visit.visit_stmt(stmt);
-        (visit.take_id(), visit.graph)
-    }
-
-    pub fn from_stmts<'a, I>(stmts: I) -> (Vec<Id>, EGraph<ECodeLanguage, ConstantFolding>)
-    where I: Iterator<Item=&'a il::Stmt> {
-        let mut visit = ECodeRewriter::default();
-
-        let mut roots = Vec::default();
-
-        for stmt in stmts {
-            visit.visit_stmt(stmt);
-            if let Some(id) = visit.last_id.take() {
-                roots.push(id);
-            }
+impl<'ecode> ECodeRewriter<'ecode> {
+    pub fn new(rules: Vec<Rewrite<ECodeLanguage, ConstantFolding>>) -> Self {
+        Self {
+            graph: Default::default(),
+            stmts: Vec::new(),
+            rules,
+            last_id: None,
         }
-
-        (roots, visit.graph)
     }
 
-    pub fn simplify(graph: EGraph<ECodeLanguage, ConstantFolding>, roots: Vec<Id>) -> Vec<RecExpr<ECodeLanguage>> {
-        let rules: Vec<Rewrite<Self, ConstantFolding>> = vec![
-            rewrite!("and-self"; "(and ?a ?a)" => "?a"),
-            rewrite!("and-0"; "(and ?a (constant 0 ?sz))" => "(constant 0 ?sz)"),
+    pub fn push_statement(&mut self, stmt: &'ecode il::Stmt) {
+        self.last_id = None;
+        self.visit_stmt(stmt);
+    }
 
-            rewrite!("or-self"; "(or ?a ?a)" => "?a"),
-            rewrite!("xor-self"; "(xor (variable ?sp ?off ?sz ?gen) (variable ?sp ?off ?sz ?gen))" => "(constant 0 ?sz)"),
+    pub fn statements(&self) -> impl Iterator<Item=(Option<&'ecode Var>, &RecExpr<ECodeLanguage>)> {
+        self.stmts.iter().map(|(v, _, e)| (*v, e))
+    }
 
-            rewrite!("double-not"; "(not (not ?a))" => "?a"),
-
-            rewrite!("add-0"; "(add ?a (constant 0 ?sz))" => "?a"),
-            rewrite!("sub-0"; "(sub ?a (constant 0 ?sz))" => "?a"),
-            rewrite!("mul-0"; "(mul ?a (constant 0 ?sz))" => "(constant 0 ?sz)"),
-            rewrite!("mul-1"; "(mul ?a 1)" => "?a"),
-
-            rewrite!("eq-t0"; "(eq ?a ?a)" => "(constant 1 8)"),
-
-            rewrite!("slt-f0"; "(slt ?a ?a)" => "(constant 0 8)"),
-
-            rewrite!("lt-f0"; "(lt ?a 0)" => "(constant 0 8)"),
-            rewrite!("lt-f1"; "(lt ?a ?a)" => "(constant 0 8)"),
-
-            rewrite!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
-            rewrite!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
-            rewrite!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
-        ];
-
+    pub fn simplify(&mut self) {
+        let egraph = std::mem::take(&mut self.graph);
         let mut runner = Runner::default()
-            .with_egraph(graph);
+            .with_egraph(egraph);
 
-        runner.roots = roots.clone();
+        runner.roots.extend(self.stmts.iter().map(|(_, id, _)| id.clone()));
 
-        let runner = runner.run(rules.iter());
-        let egraph = runner.egraph;
-
-        let mut extractor = Extractor::new(&egraph, AstSize);
-        runner.roots.into_iter().map(|root| {
-            let (_best_cost, best) = extractor.find_best(root);
-            best
-        })
-        .collect()
+        let runner = runner.run(self.rules.iter());
+        self.graph = runner.egraph;
     }
 }

@@ -64,7 +64,7 @@ impl Block {
         self.next_blocks.iter()
     }
 
-    pub fn next_location(&self) -> impl Iterator<Item=&Location> {
+    pub fn next_locations(&self) -> impl Iterator<Item=&Location> {
         self.next_blocks.iter().map(|b| b.location())
     }
 

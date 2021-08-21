@@ -6,12 +6,12 @@ use std::borrow::Cow;
 use crate::traits::Visit;
 
 #[derive(Default)]
-pub struct ConstExprEvaluator<'a> {
+pub struct ConstEvaluator<'a> {
     value: Option<Cow<'a, BitVec>>,
     variable: Option<&'a Var>,
 }
 
-impl<'a> ConstExprEvaluator<'a> {
+impl<'a> ConstEvaluator<'a> {
     pub fn eval_unary_with<F>(&mut self, expr: &'a Expr, f: F)
     where F: FnOnce(Cow<'a, BitVec>) -> Option<Cow<'a, BitVec>> {
         let mut lv = Self::default();
@@ -62,7 +62,7 @@ impl<'a> ConstExprEvaluator<'a> {
     }
 }
 
-impl<'ecode> Visit<'ecode> for ConstExprEvaluator<'ecode> {
+impl<'ecode> Visit<'ecode> for ConstEvaluator<'ecode> {
     fn visit_expr_val(&mut self, bv: &'ecode BitVec) {
         self.set_value(bv);
     }
@@ -133,5 +133,34 @@ impl<'ecode> Visit<'ecode> for ConstExprEvaluator<'ecode> {
             self.set_variable(var);
             self.visit_expr(expr);
         }
+    }
+}
+
+pub trait ConstExpr {
+    fn to_constant(&self) -> Option<BitVec>;
+}
+
+impl ConstExpr for Expr {
+    fn to_constant(&self) -> Option<BitVec> {
+        let mut eval = ConstEvaluator::default();
+        eval.visit_expr(self);
+        eval.into_value()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_add_signed_cast() -> Result<(), Box<dyn std::error::Error>> {
+        let expr = Expr::int_add(BitVec::from(10u32), Expr::cast_signed(BitVec::from(0xffff_ffffu32), 32));
+        let value = expr.to_constant();
+
+        assert_eq!(value, Some(BitVec::from(9u32)));
+
+        println!("{}", value.unwrap());
+
+        Ok(())
     }
 }

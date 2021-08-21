@@ -169,6 +169,10 @@ impl<'e> CFG<'e> {
         &self.blocks
     }
 
+    pub fn blocks_mut(&mut self) -> &mut EntityRefMap<'e, Block> {
+        &mut self.blocks
+    }
+
     pub fn entity_graph(&self) -> &EntityGraph<BranchKind> {
         &self.graph
     }

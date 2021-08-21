@@ -1,3 +1,4 @@
+use crate::models::Block;
 use crate::traits::Visit;
 
 use std::borrow::Cow;
@@ -919,9 +920,10 @@ impl<'ecode> ECodeRewriter<'ecode> {
         }
     }
 
-    fn into_stmt(translator: &'ecode Translator, output: Option<&'ecode Var>, nodes: &RecExpr<ECodeLanguage>, i: usize) -> Stmt {
+    fn into_stmt(translator: &'ecode Translator, output: Option<&'ecode Var>, nodes: &RecExpr<ECodeLanguage>) -> Stmt {
         use ECodeLanguage as L;
 
+        let i = &nodes.as_ref().len() - 1;
         let node = &nodes.as_ref()[i];
         match node {
             L::Store([tgt, src, sz, spc]) => {
@@ -989,7 +991,23 @@ impl<'ecode> ECodeRewriter<'ecode> {
         self.stmts.iter().map(|(v, _, e)| (*v, e))
     }
 
-    pub fn simplify(&mut self) {
+    pub fn extract(&self, translator: &'ecode Translator) -> Vec<Stmt> {
+        self.stmts.iter()
+            .map(|(v, _, e)| Self::into_stmt(translator, *v, e))
+            .collect()
+    }
+
+    pub fn extract_into(&self, translator: &'ecode Translator, block: &'ecode mut Block) {
+        let it = block.operations_mut()
+            .iter_mut()
+            .zip(self.stmts.iter().map(|(v, _, e)| Self::into_stmt(translator, *v, e)));
+
+        for (old, new) in it {
+            *old.value_mut() = new;
+        }
+    }
+
+    fn simplify(&mut self) {
         let egraph = std::mem::take(&mut self.graph);
         let mut runner = Runner::default()
             .with_egraph(egraph);

@@ -492,6 +492,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add(L::Intrinsic(ids));
     }
 
+    /*
     fn visit_stmt_phi(&mut self, var: &'ecode il::Var, vars: &'ecode [il::Var]) {
         use ECodeLanguage as L;
 
@@ -522,6 +523,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
 
         self.insert_id(var)
     }
+    */
 
     fn visit_stmt_assign(&mut self, var: &'ecode il::Var, expr: &'ecode il::Expr) {
         use ECodeLanguage as L;

@@ -161,13 +161,6 @@ pub trait Visit<'ecode> {
         self.visit_expr(expr);
     }
 
-    fn visit_stmt_phi(&mut self, var: &'ecode Var, vars: &'ecode [Var]) {
-        self.visit_var(var);
-        for pvar in vars {
-            self.visit_var(pvar);
-        }
-    }
-
     #[allow(unused)]
     fn visit_stmt_store_size(&mut self, size: usize) {}
     #[allow(unused)]
@@ -224,7 +217,6 @@ pub trait Visit<'ecode> {
     fn visit_stmt(&mut self, stmt: &'ecode Stmt) {
         match stmt {
             Stmt::Assign(ref var, ref expr) => self.visit_stmt_assign(var, expr),
-            Stmt::Phi(ref var, ref vars) => self.visit_stmt_phi(var, vars),
             Stmt::Store(ref loc, ref val, size, ref space) => {
                 self.visit_stmt_store(loc, val, *size, space)
             }

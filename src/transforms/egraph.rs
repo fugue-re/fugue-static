@@ -1,9 +1,11 @@
 use crate::traits::Visit;
+
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use fugue::bv::BitVec;
-use fugue::ir::AddressSpace;
-use fugue::ir::il::ecode::{self as il, Cast, Location, Var};
+use fugue::ir::{AddressSpace, AddressValue, Translator};
+use fugue::ir::il::ecode::{BinOp, BinRel, BranchTarget, Cast, Expr, Location, Stmt, UnOp, UnRel, Var};
 
 use egg::{define_language, EGraph, Id, Symbol};
 use egg::{rewrite, Analysis, AstSize, Extractor, RecExpr, Rewrite, Runner};
@@ -53,7 +55,7 @@ define_language! {
 
         "extract-high" = ExtractHigh([Id; 2]),
         "extract-low" = ExtractLow([Id; 2]),
-        "extract" = Extract([Id; 3]),
+        "extract" = Extract([Id; 3]), // expr * lsb * msb
 
         "concat" = Concat([Id; 2]),
         "intrinsic" = Intrinsic(Vec<Id>),
@@ -141,7 +143,7 @@ impl Analysis<ECodeLanguage> for ConstantFolding {
 
                 Some(lv.bitor(rv))
             }
-            // TODO: L::Extract([val, msb, lsb]) => { }
+            // TODO: L::Extract([val, lsb, msb]) => { }
 
             L::ExtractHigh([val, bits]) => {
                 let bits = egraph[*bits].leaves().find_map(|v| v.value())? as usize;
@@ -310,7 +312,7 @@ impl<'ecode> ECodeRewriter<'ecode> {
 }
 
 impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
-    fn visit_expr_var(&mut self, var: &'ecode il::Var) {
+    fn visit_expr_var(&mut self, var: &'ecode Var) {
         use ECodeLanguage as L;
 
         let space = self.graph.add(L::Value(var.space().index() as u64));
@@ -330,7 +332,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add(L::Constant([val, siz]))
     }
 
-    fn visit_expr_cast(&mut self, expr: &'ecode il::Expr, cast: &'ecode Cast) {
+    fn visit_expr_cast(&mut self, expr: &'ecode Expr, cast: &'ecode Cast) {
         use ECodeLanguage as L;
 
         self.visit_expr(expr);
@@ -363,34 +365,34 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         };
     }
 
-    fn visit_expr_unrel(&mut self, op: il::UnRel, expr: &'ecode il::Expr) {
+    fn visit_expr_unrel(&mut self, op: UnRel, expr: &'ecode Expr) {
         use ECodeLanguage as L;
 
         self.visit_expr(expr);
         let exid = self.take_id();
         match op {
-            il::UnRel::NAN => self.add(L::NaN(exid)),
+            UnRel::NAN => self.add(L::NaN(exid)),
         }
     }
 
-    fn visit_expr_unop(&mut self, op: il::UnOp, expr: &'ecode il::Expr) {
+    fn visit_expr_unop(&mut self, op: UnOp, expr: &'ecode Expr) {
         use ECodeLanguage as L;
 
         self.visit_expr(expr);
         let exid = self.take_id();
         match op {
-            il::UnOp::NOT => self.add(L::Not(exid)),
-            il::UnOp::NEG => self.add(L::Neg(exid)),
-            il::UnOp::ABS => self.add(L::Abs(exid)),
-            il::UnOp::SQRT => self.add(L::Sqrt(exid)),
-            il::UnOp::FLOOR => self.add(L::Floor(exid)),
-            il::UnOp::ROUND => self.add(L::Round(exid)),
-            il::UnOp::CEILING => self.add(L::Ceiling(exid)),
-            il::UnOp::POPCOUNT => self.add(L::PopCount(exid)),
+            UnOp::NOT => self.add(L::Not(exid)),
+            UnOp::NEG => self.add(L::Neg(exid)),
+            UnOp::ABS => self.add(L::Abs(exid)),
+            UnOp::SQRT => self.add(L::Sqrt(exid)),
+            UnOp::FLOOR => self.add(L::Floor(exid)),
+            UnOp::ROUND => self.add(L::Round(exid)),
+            UnOp::CEILING => self.add(L::Ceiling(exid)),
+            UnOp::POPCOUNT => self.add(L::PopCount(exid)),
         }
     }
 
-    fn visit_expr_binrel(&mut self, op: il::BinRel, lexpr: &'ecode il::Expr, rexpr: &'ecode il::Expr) {
+    fn visit_expr_binrel(&mut self, op: BinRel, lexpr: &'ecode Expr, rexpr: &'ecode Expr) {
         use ECodeLanguage as L;
 
         self.visit_expr(lexpr);
@@ -402,19 +404,19 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         let args = [lexid, rexid];
 
         match op {
-            il::BinRel::EQ => self.add(L::Eq(args)),
-            il::BinRel::NEQ => self.add(L::NotEq(args)),
-            il::BinRel::LT => self.add(L::Less(args)),
-            il::BinRel::LE => self.add(L::LessEq(args)),
-            il::BinRel::SLT => self.add(L::SLess(args)),
-            il::BinRel::SLE => self.add(L::SLessEq(args)),
-            il::BinRel::CARRY => self.add(L::Carry(args)),
-            il::BinRel::SCARRY => self.add(L::SCarry(args)),
-            il::BinRel::SBORROW => self.add(L::SBorrow(args)),
+            BinRel::EQ => self.add(L::Eq(args)),
+            BinRel::NEQ => self.add(L::NotEq(args)),
+            BinRel::LT => self.add(L::Less(args)),
+            BinRel::LE => self.add(L::LessEq(args)),
+            BinRel::SLT => self.add(L::SLess(args)),
+            BinRel::SLE => self.add(L::SLessEq(args)),
+            BinRel::CARRY => self.add(L::Carry(args)),
+            BinRel::SCARRY => self.add(L::SCarry(args)),
+            BinRel::SBORROW => self.add(L::SBorrow(args)),
         }
     }
 
-    fn visit_expr_binop(&mut self, op: il::BinOp, lexpr: &'ecode il::Expr, rexpr: &'ecode il::Expr) {
+    fn visit_expr_binop(&mut self, op: BinOp, lexpr: &'ecode Expr, rexpr: &'ecode Expr) {
         use ECodeLanguage as L;
 
         self.visit_expr(lexpr);
@@ -426,23 +428,23 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         let args = [lexid, rexid];
 
         match op {
-            il::BinOp::AND => self.add(L::And(args)),
-            il::BinOp::OR => self.add(L::Or(args)),
-            il::BinOp::XOR => self.add(L::Xor(args)),
-            il::BinOp::ADD => self.add(L::Add(args)),
-            il::BinOp::SUB => self.add(L::Sub(args)),
-            il::BinOp::MUL => self.add(L::Mul(args)),
-            il::BinOp::DIV => self.add(L::Div(args)),
-            il::BinOp::SDIV => self.add(L::SDiv(args)),
-            il::BinOp::REM => self.add(L::Rem(args)),
-            il::BinOp::SREM => self.add(L::SRem(args)),
-            il::BinOp::SHL => self.add(L::Shl(args)),
-            il::BinOp::SHR => self.add(L::Shr(args)),
-            il::BinOp::SAR => self.add(L::Sar(args)),
+            BinOp::AND => self.add(L::And(args)),
+            BinOp::OR => self.add(L::Or(args)),
+            BinOp::XOR => self.add(L::Xor(args)),
+            BinOp::ADD => self.add(L::Add(args)),
+            BinOp::SUB => self.add(L::Sub(args)),
+            BinOp::MUL => self.add(L::Mul(args)),
+            BinOp::DIV => self.add(L::Div(args)),
+            BinOp::SDIV => self.add(L::SDiv(args)),
+            BinOp::REM => self.add(L::Rem(args)),
+            BinOp::SREM => self.add(L::SRem(args)),
+            BinOp::SHL => self.add(L::Shl(args)),
+            BinOp::SHR => self.add(L::Shr(args)),
+            BinOp::SAR => self.add(L::Sar(args)),
         }
     }
 
-    fn visit_expr_load(&mut self, expr: &'ecode il::Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
+    fn visit_expr_load(&mut self, expr: &'ecode Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
         use ECodeLanguage as L;
 
         self.visit_expr(expr);
@@ -453,7 +455,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add(ECodeLanguage::Load([exid, szid, spid]));
     }
 
-    fn visit_expr_extract(&mut self, expr: &'ecode il::Expr, lsb: usize, msb: usize) {
+    fn visit_expr_extract(&mut self, expr: &'ecode Expr, lsb: usize, msb: usize) {
         use ECodeLanguage as L;
 
         self.visit_expr(expr);
@@ -464,7 +466,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add(ECodeLanguage::Extract([exid, lsbid, msbid]));
     }
 
-    fn visit_expr_concat(&mut self, lexpr: &'ecode il::Expr, rexpr: &'ecode il::Expr) {
+    fn visit_expr_concat(&mut self, lexpr: &'ecode Expr, rexpr: &'ecode Expr) {
         use ECodeLanguage as L;
 
         self.visit_expr(lexpr);
@@ -476,7 +478,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add(L::Concat([lexid, rexid]))
     }
 
-    fn visit_expr_intrinsic(&mut self, name: &'ecode str, args: &'ecode [Box<il::Expr>], bits: usize) {
+    fn visit_expr_intrinsic(&mut self, name: &'ecode str, args: &'ecode [Box<Expr>], bits: usize) {
         use ECodeLanguage as L;
 
         let mut ids = vec![
@@ -493,7 +495,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
     }
 
     /*
-    fn visit_stmt_phi(&mut self, var: &'ecode il::Var, vars: &'ecode [il::Var]) {
+    fn visit_stmt_phi(&mut self, var: &'ecode Var, vars: &'ecode [Var]) {
         use ECodeLanguage as L;
 
         let mut varids = Vec::new();
@@ -525,7 +527,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
     }
     */
 
-    fn visit_stmt_assign(&mut self, var: &'ecode il::Var, expr: &'ecode il::Expr) {
+    fn visit_stmt_assign(&mut self, var: &'ecode Var, expr: &'ecode Expr) {
         use ECodeLanguage as L;
 
         self.visit_expr(expr);
@@ -551,7 +553,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.insert_id(var)
     }
 
-    fn visit_stmt_store(&mut self, loc: &'ecode il::Expr, val: &'ecode il::Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
+    fn visit_stmt_store(&mut self, loc: &'ecode Expr, val: &'ecode Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
         use ECodeLanguage as L;
 
         self.visit_expr(loc);
@@ -566,7 +568,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add_eff(L::Store([locid, valid, szid, spid]));
     }
 
-    fn visit_stmt_intrinsic(&mut self, name: &'ecode str, args: &'ecode [il::Expr]) {
+    fn visit_stmt_intrinsic(&mut self, name: &'ecode str, args: &'ecode [Expr]) {
         use ECodeLanguage as L;
 
         let mut ids = vec![
@@ -592,7 +594,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add(L::Location([addr, pos, spid]))
     }
 
-    fn visit_stmt_branch(&mut self, branch_target: &'ecode il::BranchTarget) {
+    fn visit_stmt_branch(&mut self, branch_target: &'ecode BranchTarget) {
         use ECodeLanguage as L;
 
         self.visit_branch_target(branch_target);
@@ -600,7 +602,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add_eff(L::Branch(tid))
     }
 
-    fn visit_stmt_cbranch(&mut self, cond: &'ecode il::Expr, branch_target: &'ecode il::BranchTarget) {
+    fn visit_stmt_cbranch(&mut self, cond: &'ecode Expr, branch_target: &'ecode BranchTarget) {
         use ECodeLanguage as L;
 
         self.visit_expr(cond);
@@ -612,7 +614,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add_eff(L::CBranch([exid, tid]))
     }
 
-    fn visit_stmt_call(&mut self, branch_target: &'ecode il::BranchTarget) {
+    fn visit_stmt_call(&mut self, branch_target: &'ecode BranchTarget) {
         use ECodeLanguage as L;
 
         self.visit_branch_target(branch_target);
@@ -620,7 +622,7 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
         self.add_eff(L::Call(tid))
     }
 
-    fn visit_stmt_return(&mut self, branch_target: &'ecode il::BranchTarget) {
+    fn visit_stmt_return(&mut self, branch_target: &'ecode BranchTarget) {
         use ECodeLanguage as L;
 
         self.visit_branch_target(branch_target);
@@ -635,6 +637,340 @@ impl<'ecode> Visit<'ecode> for ECodeRewriter<'ecode> {
 }
 
 impl<'ecode> ECodeRewriter<'ecode> {
+    fn into_name(nodes: &RecExpr<ECodeLanguage>, i: usize) -> Cow<str> {
+        use ECodeLanguage as L;
+
+        if let L::Name(v) = &nodes.as_ref()[i] {
+            Cow::from(v.as_str())
+        } else {
+            panic!("language term at index {} is not a name", i);
+        }
+    }
+
+    fn into_value(nodes: &RecExpr<ECodeLanguage>, i: usize) -> u64 {
+        use ECodeLanguage as L;
+
+        if let L::Value(v) = &nodes.as_ref()[i] {
+            *v
+        } else {
+            panic!("language term at index {} is not a value", i);
+        }
+    }
+
+    fn into_location(translator: &'ecode Translator, nodes: &RecExpr<ECodeLanguage>, i: usize) -> Location {
+        use ECodeLanguage as L;
+
+        if let L::Location([off, pos, spc]) = &nodes.as_ref()[i] {
+            let off = Self::into_value(nodes, (*off).into());
+            let pos = Self::into_value(nodes, (*pos).into()) as usize;
+            let spc = Self::into_value(nodes, (*spc).into()) as usize;
+
+            let space = translator.manager().spaces()[spc].clone();
+            let address = AddressValue::new(space, off);
+
+            Location::new(address, pos)
+        } else {
+            panic!("language term at index {} is not a value", i);
+        }
+    }
+
+    fn into_branch_target(translator: &'ecode Translator, nodes: &RecExpr<ECodeLanguage>, i: usize) -> BranchTarget {
+        use ECodeLanguage as L;
+
+        let node = &nodes.as_ref()[i];
+        match node {
+            L::Location(_) => Self::into_location(translator, nodes, i).into(),
+            _ => BranchTarget::computed(Self::into_expr(translator, nodes, i))
+        }
+    }
+
+    fn into_variable(translator: &'ecode Translator, nodes: &RecExpr<ECodeLanguage>, i: usize) -> Var {
+        use ECodeLanguage as L;
+
+        if let L::Variable([spc, off, sz, gen]) = &nodes.as_ref()[i] {
+            let space = translator.manager()
+                .spaces()[Self::into_value(nodes, (*spc).into()) as usize]
+                .clone();
+
+            Var::new(
+                space,
+                Self::into_value(nodes, (*off).into()),
+                Self::into_value(nodes, (*sz).into()) as usize,
+                Self::into_value(nodes, (*gen).into()) as usize,
+            )
+        } else {
+            panic!("language term at index {} is not a variable", i);
+        }
+    }
+
+    fn into_expr(translator: &'ecode Translator, nodes: &RecExpr<ECodeLanguage>, i: usize) -> Expr {
+        use ECodeLanguage as L;
+
+        let node = &nodes.as_ref()[i];
+        match node {
+            // unary
+            L::Not(expr) => Expr::UnOp(
+                UnOp::NOT,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+            L::Neg(expr) => Expr::UnOp(
+                UnOp::NEG,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+            L::Abs(expr) => Expr::UnOp(
+                UnOp::ABS,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+            L::Sqrt(expr) => Expr::UnOp(
+                UnOp::SQRT,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+            L::Ceiling(expr) => Expr::UnOp(
+                UnOp::CEILING,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+            L::Floor(expr) => Expr::UnOp(
+                UnOp::FLOOR,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+            L::Round(expr) => Expr::UnOp(
+                UnOp::ROUND,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+            L::PopCount(expr) => Expr::UnOp(
+                UnOp::POPCOUNT,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+            L::NaN(expr) => Expr::UnRel(
+                UnRel::NAN,
+                Box::new(Self::into_expr(translator, nodes, (*expr).into())),
+            ),
+
+            // binary
+            L::And([lhs, rhs]) => Expr::BinOp(
+                BinOp::AND,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Or([lhs, rhs]) => Expr::BinOp(
+                BinOp::OR,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Xor([lhs, rhs]) => Expr::BinOp(
+                BinOp::XOR,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Add([lhs, rhs]) => Expr::BinOp(
+                BinOp::ADD,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Sub([lhs, rhs]) => Expr::BinOp(
+                BinOp::SUB,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Div([lhs, rhs]) => Expr::BinOp(
+                BinOp::DIV,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::SDiv([lhs, rhs]) => Expr::BinOp(
+                BinOp::SDIV,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Mul([lhs, rhs]) => Expr::BinOp(
+                BinOp::MUL,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Rem([lhs, rhs]) => Expr::BinOp(
+                BinOp::REM,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::SRem([lhs, rhs]) => Expr::BinOp(
+                BinOp::SREM,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Shl([lhs, rhs]) => Expr::BinOp(
+                BinOp::SHL,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Sar([lhs, rhs]) => Expr::BinOp(
+                BinOp::SAR,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Shr([lhs, rhs]) => Expr::BinOp(
+                BinOp::SHR,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+
+            L::Eq([lhs, rhs]) => Expr::BinRel(
+                BinRel::EQ,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::NotEq([lhs, rhs]) => Expr::BinRel(
+                BinRel::NEQ,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Less([lhs, rhs]) => Expr::BinRel(
+                BinRel::LT,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::LessEq([lhs, rhs]) => Expr::BinRel(
+                BinRel::LE,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::SLess([lhs, rhs]) => Expr::BinRel(
+                BinRel::SLT,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::SLessEq([lhs, rhs]) => Expr::BinRel(
+                BinRel::SLE,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+
+            L::SBorrow([lhs, rhs]) => Expr::BinRel(
+                BinRel::SBORROW,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::Carry([lhs, rhs]) => Expr::BinRel(
+                BinRel::CARRY,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::SCarry([lhs, rhs]) => Expr::BinRel(
+                BinRel::SCARRY,
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+
+            // casts
+            L::CastBool(expr) => Expr::cast_bool(
+                Self::into_expr(translator, nodes, (*expr).into())
+            ),
+            L::CastFloat([expr, bits]) => Expr::cast_float(
+                Self::into_expr(translator, nodes, (*expr).into()),
+                translator.float_format(Self::into_value(nodes, (*bits).into()) as usize)
+                    .expect("valid float-format")
+            ),
+            L::CastSigned([expr, bits]) => Expr::cast_signed(
+                Self::into_expr(translator, nodes, (*expr).into()),
+                Self::into_value(nodes, (*bits).into()) as usize,
+            ),
+            L::CastUnsigned([expr, bits]) => Expr::cast_unsigned(
+                Self::into_expr(translator, nodes, (*expr).into()),
+                Self::into_value(nodes, (*bits).into()) as usize,
+            ),
+
+            // misc
+            L::Concat([lhs, rhs]) => Expr::Concat(
+                Box::new(Self::into_expr(translator, nodes, (*lhs).into())),
+                Box::new(Self::into_expr(translator, nodes, (*rhs).into())),
+            ),
+            L::ExtractHigh([expr, bits]) => Expr::extract_high(
+                Self::into_expr(translator, nodes, (*expr).into()),
+                Self::into_value(nodes, (*bits).into()) as usize,
+            ),
+            L::ExtractLow([expr, bits]) => Expr::extract_high(
+                Self::into_expr(translator, nodes, (*expr).into()),
+                Self::into_value(nodes, (*bits).into()) as usize,
+            ),
+            L::Extract([expr, lsb, msb]) => Expr::extract(
+                Self::into_expr(translator, nodes, (*expr).into()),
+                Self::into_value(nodes, (*lsb).into()) as usize,
+                Self::into_value(nodes, (*msb).into()) as usize,
+            ),
+            L::Intrinsic(parts) => {
+                let name = Self::into_name(nodes, parts[0].into());
+                let size = Self::into_value(nodes, parts[1].into()) as usize;
+
+                Expr::intrinsic(
+                    name.into(),
+                    parts[2..].iter().map(|arg| Self::into_expr(translator, nodes, (*arg).into())),
+                    size,
+                )
+            },
+
+            // primitives
+            L::Constant([val, sz]) => {
+                let val = Self::into_value(nodes, (*val).into());
+                let sz = Self::into_value(nodes, (*sz).into()) as usize;
+                BitVec::from_u64(val, sz).into()
+            },
+            L::Variable(_) => Self::into_variable(translator, nodes, i).into(),
+
+            _ => panic!("language term at index {} is not an expression", i)
+        }
+    }
+
+    fn into_stmt(translator: &'ecode Translator, output: Option<&'ecode Var>, nodes: &RecExpr<ECodeLanguage>, i: usize) -> Stmt {
+        use ECodeLanguage as L;
+
+        let node = &nodes.as_ref()[i];
+        match node {
+            L::Store([tgt, src, sz, spc]) => {
+                let space = translator.manager()
+                    .spaces()[Self::into_value(nodes, (*spc).into()) as usize]
+                    .clone();
+
+                Stmt::Store(
+                    Self::into_expr(translator, nodes, (*tgt).into()),
+                    Self::into_expr(translator, nodes, (*src).into()),
+                    Self::into_value(nodes, (*sz).into()) as usize,
+                    space,
+                )
+            },
+            L::Intrinsic(parts) => {
+                assert!(output.is_none());
+
+                let name = Self::into_name(nodes, parts[0].into());
+
+                Stmt::intrinsic(
+                    name.into(),
+                    parts[2..].iter().map(|arg| Self::into_expr(translator, nodes, (*arg).into())),
+                )
+            },
+            L::Branch(bt) => Stmt::Branch(
+                Self::into_branch_target(translator, nodes, (*bt).into()),
+            ),
+            L::CBranch([c, bt]) => Stmt::CBranch(
+                Self::into_expr(translator, nodes, (*c).into()),
+                Self::into_branch_target(translator, nodes, (*bt).into()),
+            ),
+            L::Call(bt) => Stmt::Call(
+                Self::into_branch_target(translator, nodes, (*bt).into()),
+            ),
+            L::Return(bt) => Stmt::Return(
+                Self::into_branch_target(translator, nodes, (*bt).into()),
+            ),
+            L::Skip => Stmt::Skip,
+            _ => if let Some(var) = output {
+                let expr = Self::into_expr(translator, nodes, i);
+                Stmt::Assign(var.clone(), expr)
+            } else {
+                panic!("language term at index {} is not a statement", i)
+            }
+        }
+    }
+}
+
+impl<'ecode> ECodeRewriter<'ecode> {
     pub fn new(rules: Vec<Rewrite<ECodeLanguage, ConstantFolding>>) -> Self {
         Self {
             graph: Default::default(),
@@ -644,7 +980,7 @@ impl<'ecode> ECodeRewriter<'ecode> {
         }
     }
 
-    pub fn push_statement(&mut self, stmt: &'ecode il::Stmt) {
+    pub fn push_statement(&mut self, stmt: &'ecode Stmt) {
         self.last_id = None;
         self.visit_stmt(stmt);
     }

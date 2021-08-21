@@ -24,10 +24,7 @@ impl<'a> SimpleVar<'a> {
     }
 
     fn into_owned<'b>(self) -> SimpleVar<'b> where 'a: 'b {
-        match self.0 {
-            Cow::Borrowed(v) => Self(Cow::Owned(v.clone())),
-            Cow::Owned(v) => Self(Cow::Owned(v))
-        }
+        Self(Cow::Owned(self.0.into_owned()))
     }
 }
 

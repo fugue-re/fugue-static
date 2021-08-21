@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -15,38 +16,51 @@ use crate::traits::dominance::DominanceTree;
 
 #[derive(Debug, Clone)]
 #[repr(transparent)]
-struct SimpleVar(Var);
+struct SimpleVar<'a>(Cow<'a, Var>);
 
-impl From<&Var> for SimpleVar {
-    fn from(var: &Var) -> Self {
-        Self(var.clone())
+impl<'a> SimpleVar<'a> {
+    fn owned(var: &Var) -> Self {
+        Self(Cow::Owned(var.clone()))
+    }
+
+    fn into_owned<'b>(self) -> SimpleVar<'b> where 'a: 'b {
+        match self.0 {
+            Cow::Borrowed(v) => Self(Cow::Owned(v.clone())),
+            Cow::Owned(v) => Self(Cow::Owned(v))
+        }
     }
 }
 
-impl From<&mut Var> for SimpleVar {
-    fn from(var: &mut Var) -> Self {
-        Self(var.clone())
+impl<'a> From<&'a Var> for SimpleVar<'a> {
+    fn from(var: &'a Var) -> Self {
+        Self(Cow::Borrowed(var))
     }
 }
 
-impl Deref for SimpleVar {
-    type Target = Var;
+impl<'a> From<&'a mut Var> for SimpleVar<'a> {
+    fn from(var: &'a mut Var) -> Self {
+        Self(Cow::Borrowed(var))
+    }
+}
+
+impl<'a> Deref for SimpleVar<'a> {
+    type Target = Cow<'a, Var>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl PartialEq for SimpleVar {
+impl<'a> PartialEq for SimpleVar<'a> {
     fn eq(&self, other: &Self) -> bool {
         self.space().index() == other.space().index() &&
             self.offset() == other.offset() &&
             self.bits() == other.bits()
     }
 }
-impl Eq for SimpleVar { }
+impl<'a> Eq for SimpleVar<'a> { }
 
-impl Hash for SimpleVar {
+impl<'a> Hash for SimpleVar<'a> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.space().hash(state);
         self.offset().hash(state);
@@ -54,43 +68,44 @@ impl Hash for SimpleVar {
     }
 }
 
-type SSAMapping = HashMap<SimpleVar, usize>;
+type SSAMapping<'a> = HashMap<SimpleVar<'a>, usize>;
 
 #[derive(Clone)]
-struct SSAScope(SSAMapping);
+struct SSAScope<'a>(SSAMapping<'a>);
 
-impl SSAScope {
+impl<'a> SSAScope<'a> {
     pub fn new() -> Self {
         Self(SSAMapping::new())
     }
 
-    pub fn current(&self, operand: &SimpleVar) -> Option<usize> {
+    pub fn current(&self, operand: &SimpleVar<'a>) -> Option<usize> {
         self.0.get(operand).copied()
     }
 
-    pub fn define(&mut self, mapping: &mut SSAMapping, operand: &SimpleVar) -> usize {
+    pub fn define(&mut self, mapping: &mut SSAMapping<'a>, operand: SimpleVar<'a>) -> usize {
+        let operand = operand.into_owned();
         let generation = *mapping
             .entry(operand.clone())
             .and_modify(|v| *v += 1)
             .or_insert(1);
 
-        self.0.insert(operand.clone(), generation);
+        self.0.insert(operand, generation);
         generation
     }
 }
 
-struct SSAScopeStack(Vec<SSAScope>);
+struct SSAScopeStack<'a>(Vec<SSAScope<'a>>);
 
-impl SSAScopeStack {
-    fn new() -> (SSAMapping, Self) {
+impl<'a> SSAScopeStack<'a> {
+    fn new() -> (SSAMapping<'a>, Self) {
         (HashMap::new(), Self(vec![SSAScope::new()]))
     }
 
-    fn push(&mut self, scope: &SSAScope) {
+    fn push(&mut self, scope: &SSAScope<'a>) {
         self.0.push(scope.clone());
     }
 
-    fn pop(&mut self) -> SSAScope {
+    fn pop(&mut self) -> SSAScope<'a> {
         self.0.pop().unwrap()
     }
 }
@@ -114,7 +129,7 @@ fn transform<'ecode>(g: &mut CFG<'ecode>) {
 
         let nx = g.entity_mapping[eid];
 
-        for def in defs_tmp.drain().map(SimpleVar::from) {
+        for def in defs_tmp.drain().map(SimpleVar::owned) {
             defined.entry(def)
                 .or_insert_with(HashSet::new)
                 .insert(nx);
@@ -166,16 +181,15 @@ fn transform<'ecode>(g: &mut CFG<'ecode>) {
         let block = g.blocks.get_mut(&eid).unwrap();
 
         for (var, phin) in block.to_mut().value_mut().phis_mut() {
-            // TODO: remove allocation
             let (_, ns) = phim.remove(&SimpleVar::from(var)).unwrap();
             *phin = ns;
         }
     }
 }
 
-fn transform_rename(
+fn transform_rename<'a>(
     root: NodeIndex,
-    phi_locs: &mut HashMap<NodeIndex, HashMap<SimpleVar, (HashSet<NodeIndex>, Vec<Var>)>>,
+    phi_locs: &mut HashMap<NodeIndex, HashMap<SimpleVar<'a>, (HashSet<NodeIndex>, Vec<Var>)>>,
     dt: &DominanceTree,
     g: &mut CFG,
 ) {
@@ -190,7 +204,7 @@ fn transform_rename(
 
         if let Some(phi) = phi_locs.get(&node) {
             for (var, _) in phi.iter() {
-                let generation = renamer.define(&mut gmapping, var);
+                let generation = renamer.define(&mut gmapping, var.clone());
                 let nvar = var.with_generation(generation);
                 block.to_mut().value_mut().phis_mut().insert(nvar, Vec::new());
             }
@@ -198,7 +212,6 @@ fn transform_rename(
 
         for op in block.to_mut().value_mut().operations_mut() {
             for var in op.value_mut().used_variables_mut::<Vec<_>>().into_iter() {
-                // TODO: avoid this allocation
                 let simple = SimpleVar::from(&*var);
                 if let Some(generation) = renamer.current(&simple) {
                     *var = var.with_generation(generation);
@@ -206,9 +219,8 @@ fn transform_rename(
             }
 
             for var in op.value_mut().defined_variables_mut::<Vec<_>>().into_iter() {
-                // TODO: avoid this allocation
-                let simple = SimpleVar::from(&*var);
-                *var = var.with_generation(renamer.define(&mut gmapping, &simple));
+                let simple = SimpleVar::owned(&*var);
+                *var = var.with_generation(renamer.define(&mut gmapping, simple));
             }
         }
 
@@ -226,7 +238,6 @@ fn transform_rename(
         }
 
         for _succ in dt.neighbors_directed(node, EdgeDirection::Outgoing) {
-            // TODO: rewrite to remove recursion
             ssa_stack.push(&renamer);
         }
     }

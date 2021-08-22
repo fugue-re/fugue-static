@@ -6,9 +6,10 @@ use petgraph::algo::kosaraju_scc;
 use petgraph::graph::IndexType;
 use petgraph::visit::{IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, GraphRef, NodeCount, Reversed, VisitMap, Visitable};
 
+use std::borrow::Borrow;
 use std::collections::VecDeque;
 
-use crate::graphs::traversals::Traversal;
+use crate::graphs::traversals::{PostOrder, Traversal};
 use crate::types::EntityGraph;
 
 /// Visit nodes in a depth-first-search (DFS) emitting nodes in reverse postorder
@@ -135,6 +136,7 @@ where
             if self.finished.count_ones(..) != graph.node_count() {
                 while let Some(cs) = self.scc.pop() {
                     if !self.discovered.is_visited(&cs[0]) {
+                        self.end_neighbours.push(cs[0]);
                         self.stack.push(Some(cs[0]));
                         continue 'outer
                     }
@@ -148,16 +150,16 @@ where
 }
 
 impl<'a> Traversal<'a> for RevPostOrder<NodeIndex> {
-    fn into_queue<E, G>(graph: G) -> VecDeque<NodeIndex>
-    where G: AsRef<EntityGraph<E>> + 'a {
-        let g = graph.as_ref();
-        let mut traversal = Self::new(g);
+    fn into_queue_with_roots<E, G>(graph: G) -> (Vec<NodeIndex>, VecDeque<NodeIndex>)
+    where G: Borrow<EntityGraph<E>> + 'a {
+        let g = graph.borrow();
+        let mut traversal = PostOrder::new(g);
         let mut queue = VecDeque::new();
 
         while let Some(nx) = traversal.next(g) {
-            queue.push_back(nx);
+            queue.push_front(nx);
         }
 
-        queue
+        (traversal.start_neighbours, queue)
     }
 }

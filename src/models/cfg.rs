@@ -1,3 +1,4 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug, Display};
 use std::ops::{Deref, DerefMut};
@@ -94,6 +95,36 @@ impl<'a, 'e> Display for DotCFG<'a, 'e> {
             &|_, _| "shape=box".to_owned());
 
         write!(f, "{}", dot)
+    }
+}
+
+impl<'e> Borrow<EntityGraph<BranchKind>> for CFG<'e> {
+    fn borrow(&self) -> &EntityGraph<BranchKind> {
+        &self.graph
+    }
+}
+
+impl<'e> Borrow<EntityGraph<BranchKind>> for &'_ CFG<'e> {
+    fn borrow(&self) -> &EntityGraph<BranchKind> {
+        &self.graph
+    }
+}
+
+impl<'e> Borrow<EntityGraph<BranchKind>> for &'_ mut CFG<'e> {
+    fn borrow(&self) -> &EntityGraph<BranchKind> {
+        &self.graph
+    }
+}
+
+impl<'e> BorrowMut<EntityGraph<BranchKind>> for CFG<'e> {
+    fn borrow_mut(&mut self) -> &mut EntityGraph<BranchKind> {
+        &mut self.graph
+    }
+}
+
+impl<'e> BorrowMut<EntityGraph<BranchKind>> for &'_ mut CFG<'e> {
+    fn borrow_mut(&mut self) -> &mut EntityGraph<BranchKind> {
+        &mut self.graph
     }
 }
 
@@ -245,27 +276,15 @@ impl<'e> CFG<'e> {
         DotCFG(self)
     }
 
-    pub fn dominance_tree(&self) -> (NodeIndex, DominanceTree) {
-        if self.entry_points.len() > 1 {
-            panic!("dominance tree for multiple entry points")
-        }
-
-        self.graph.dominance_tree(self.default_entry().unwrap())
+    pub fn dominance_tree(&self) -> DominanceTree {
+        self.graph.dominance_tree()
     }
 
     pub fn dominance_frontier(&self) -> DominanceFrontier {
-        if self.entry_points.len() > 1 {
-            panic!("dominance frontier for multiple entry points")
-        }
-
-        self.graph.dominance_frontier(self.default_entry().unwrap())
+        self.graph.dominance_frontier()
     }
 
     pub fn dominance(&self) -> Dominance {
-        if self.entry_points.len() > 1 {
-            panic!("dominance frontier for multiple entry points")
-        }
-
-        self.graph.dominance(self.default_entry().unwrap())
+        self.graph.dominance()
     }
 }

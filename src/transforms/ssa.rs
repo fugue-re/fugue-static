@@ -6,7 +6,6 @@ use std::ops::Deref;
 
 use petgraph::EdgeDirection;
 use petgraph::graph::NodeIndex;
-use petgraph::visit::Dfs;
 
 use fugue::ir::il::ecode::Var;
 
@@ -109,7 +108,7 @@ impl<'a> SSAScopeStack<'a> {
 
 fn transform<'ecode>(g: &mut CFG<'ecode>) {
     let df = g.dominance_frontier();
-    let (dt_root, dt) = g.dominance_tree();
+    let dt = g.dominance_tree();
 
     let mut defined = HashMap::new(); // SimpleVar -> Set<BlockIds>
     let mut free = HashSet::new(); // Set<SimpleVar>
@@ -166,7 +165,6 @@ fn transform<'ecode>(g: &mut CFG<'ecode>) {
 
     // rename + construct phi assignment vectors
     transform_rename(
-        dt_root,
         &mut phi_locs,
         &dt,
         g,
@@ -185,15 +183,14 @@ fn transform<'ecode>(g: &mut CFG<'ecode>) {
 }
 
 fn transform_rename<'a>(
-    root: NodeIndex,
     phi_locs: &mut HashMap<NodeIndex, HashMap<SimpleVar<'a>, (HashSet<NodeIndex>, Vec<Var>)>>,
     dt: &DominanceTree,
     g: &mut CFG,
 ) {
-    let mut pre_order = Dfs::new(dt, root);
+    let mut pre_order = dt.visit_pre_order();
     let (mut gmapping, mut ssa_stack) = SSAScopeStack::new();
 
-    while let Some(node) = pre_order.next(dt) {
+    while let Some(node) = pre_order.next() {
         let mut renamer = ssa_stack.pop();
 
         let eid = g[node].clone();

@@ -67,7 +67,7 @@ impl<'tree> Iterator for DominanceTreePreOrder<'tree> {
                         self.stack.push(succ);
                     }
                 }
-                return Some(node);
+                return Some(node)
             }
         }
         None
@@ -99,15 +99,21 @@ impl<E> DominanceExt for EntityGraph<E> {
         let dominators = dominance::simple_fast(graph);
         let roots = dominators.roots();
 
-        let tree_roots = roots.iter().map(|root| tree.add_node(*root)).collect();
+        let mut mapping = HashMap::new();
+
+        let tree_roots = roots.iter().map(|root| {
+            let idx = tree.add_node(*root);
+            mapping.insert(*root, idx);
+            idx
+        }).collect();
 
         for d in graph.node_indices().filter(|nx| !roots.contains(nx)) {
-            tree.add_node(d);
+            mapping.insert(d, tree.add_node(d));
         }
 
         for d in graph.node_indices() {
             if let Some(idom) = dominators.immediate_dominator(d) {
-                tree.add_edge(idom, d, ());
+                tree.add_edge(mapping[&idom], mapping[&d], ());
             }
         }
 
@@ -155,11 +161,16 @@ impl<E> DominanceExt for EntityGraph<E> {
         let dominators = dominance::simple_fast(graph);
         let roots = dominators.roots();
 
-        let tree_roots = roots.iter().map(|root| tree.add_node(*root)).collect();
+        let mut tree_mapping = HashMap::new();
+        let tree_roots = roots.iter().map(|root| {
+            let idx = tree.add_node(*root);
+            tree_mapping.insert(*root, idx);
+            idx
+        }).collect();
 
         for d in graph.node_indices() {
             if !roots.contains(&d) {
-                tree.add_node(d);
+                tree_mapping.insert(d, tree.add_node(d));
             }
 
             let idom = if let Some(idom) = dominators.immediate_dominator(d) {
@@ -183,7 +194,7 @@ impl<E> DominanceExt for EntityGraph<E> {
 
         for d in graph.node_indices() {
             if let Some(idom) = dominators.immediate_dominator(d) {
-                tree.add_edge(idom, d, ());
+                tree.add_edge(tree_mapping[&idom], tree_mapping[&d], ());
             }
         }
 

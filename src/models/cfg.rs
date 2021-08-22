@@ -172,6 +172,10 @@ impl<'e> CFG<'e> {
         self.entry_points.iter().next().map(|(_, idx)| *idx)
     }
 
+    pub fn block_node(&self, block: &EntityId) -> Option<NodeIndex> {
+        self.entity_mapping.get(block).copied()
+    }
+
     pub fn block_at(&self, index: NodeIndex) -> &EntityRef<'e, Block> {
         let eid = &self.graph[index];
         &self.blocks[eid]

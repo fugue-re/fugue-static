@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug, Display};
 use std::ops::{Deref, DerefMut};
 
-use petgraph::dot::{Dot, Config as DotConfig};
 use petgraph::stable_graph::NodeIndex;
 
 use fugue::ir::il::ecode::{EntityId, Location};
@@ -12,8 +11,8 @@ use crate::models::Block;
 
 use crate::traits::{EntityRef, IntoEntityRef};
 use crate::traits::dominance::*;
-
 use crate::types::{EntityRefMap, EntityGraph};
+
 
 #[derive(Debug, Copy, Clone)]
 pub enum BranchKind {
@@ -60,42 +59,6 @@ pub struct CFG<'e> {
 
     pub(crate) entity_mapping: HashMap<EntityId, NodeIndex>,
     pub(crate) blocks: EntityRefMap<'e, Block>,
-}
-
-// NOTE: this is a hack to get petgraph to render blocks nicely
-pub struct DisplayAlways<T: Display>(T);
-
-impl<T> Debug for DisplayAlways<T> where T: Display {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl<T> Display for DisplayAlways<T> where T: Display {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-pub struct DotCFG<'a, 'e>(&'a CFG<'e>);
-
-impl<'a, 'e> Display for DotCFG<'a, 'e> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let g_str = self.0
-            .map(|_nx, n| {
-                let block = &self.0.blocks()[n];
-                DisplayAlways(format!("{}", block.value()))
-            },
-            |_ex, e| e);
-
-        let dot = Dot::with_attr_getters(
-            &g_str,
-            &[DotConfig::EdgeNoLabel],
-            &|_, _| "".to_owned(),
-            &|_, _| "shape=box".to_owned());
-
-        write!(f, "{}", dot)
-    }
 }
 
 impl<'e> Borrow<EntityGraph<BranchKind>> for CFG<'e> {
@@ -274,10 +237,6 @@ impl<'e> CFG<'e> {
         let blk_start = self.entity_mapping[tgt.id()];
 
         self.graph.add_edge(blk_end, blk_start, BranchKind::Jump);
-    }
-
-    pub fn dot<'a>(&'a self) -> DotCFG<'a, 'e> {
-        DotCFG(self)
     }
 
     pub fn dominance_tree(&self) -> DominanceTree {

@@ -58,13 +58,17 @@ impl Function {
             match blk.value().last().value() {
                 Stmt::CBranch(_, BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());
-                    let tgt = &blks[&tgt_id];
-                    cfg.add_cond(blk, tgt);
+                    if self.blocks.contains(&tgt_id) {
+                        let tgt = &blks[&tgt_id];
+                        cfg.add_cond(blk, tgt);
+                    }
                 },
                 Stmt::Branch(BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());
-                    let tgt = &blks[&tgt_id];
-                    cfg.add_jump(blk, tgt);
+                    if self.blocks.contains(&tgt_id) {
+                        let tgt = &blks[&tgt_id];
+                        cfg.add_jump(blk, tgt);
+                    }
                 },
                 _ => (),
             }

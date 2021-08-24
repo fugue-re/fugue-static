@@ -1,4 +1,4 @@
-use std::borrow::{Borrow, BorrowMut};
+use std::borrow::{Borrow, BorrowMut, Cow};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug, Display};
 use std::ops::{Deref, DerefMut};
@@ -120,6 +120,17 @@ impl<'e> DerefMut for CFG<'e> {
 impl<'e> CFG<'e> {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn cloned<'a>(&self) -> CFG<'a> {
+        CFG {
+            graph: self.graph.clone(),
+            entry_points: self.entry_points.clone(),
+            entity_mapping: self.entity_mapping.clone(),
+            blocks: self.blocks.iter()
+                .map(|(id, blk)| (id.clone(), Cow::Owned(blk.as_ref().clone())))
+                .collect(),
+        }
     }
 
     pub fn node_count(&self) -> usize {

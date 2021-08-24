@@ -7,6 +7,7 @@ use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
 
 use crate::models::{Block, BlockLifter, Program};
 use crate::models::cfg::{BranchKind, CFG};
+use crate::traits::StmtExt;
 
 use thiserror::Error;
 
@@ -76,7 +77,7 @@ impl Function {
             let blkx = cfg.block_node(blkid).unwrap();
             for tgt in blk.next_blocks() {
                 if let Some(nx) = cfg.block_node(tgt) {
-                    if !cfg.contains_edge(blkx, nx) {
+                    if !cfg.contains_edge(blkx, nx) && !blk.operations().last().map(|op| op.is_return()).unwrap_or(false) {
                         cfg.add_edge(blkx, nx, BranchKind::Fall);
                     }
                 }

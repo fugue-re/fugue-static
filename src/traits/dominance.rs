@@ -9,7 +9,7 @@ use std::ops::{Deref, DerefMut};
 use fixedbitset::FixedBitSet;
 
 use crate::graphs::algorithms::dominance;
-use crate::types::EntityGraph;
+use crate::types::AsEntityGraph;
 
 pub type DominanceFrontier = HashMap<NodeIndex, HashSet<NodeIndex>>;
 
@@ -86,13 +86,13 @@ pub struct Dominance {
 }
 
 pub trait DominanceExt {
-    fn dominance_tree(&self) -> DominanceTree;
-    fn dominance_frontier(&self) -> DominanceFrontier;
-    fn dominance(&self) -> Dominance;
+    fn dominance_tree(self) -> DominanceTree;
+    fn dominance_frontier(self) -> DominanceFrontier;
+    fn dominance(self) -> Dominance;
 }
 
-impl<E> DominanceExt for EntityGraph<E> {
-    fn dominance_tree(&self) -> DominanceTree {
+impl<G> DominanceExt for G where G: AsEntityGraph {
+    fn dominance_tree(self) -> DominanceTree {
         let graph = self;
         let mut tree = DiGraph::new();
 
@@ -107,11 +107,11 @@ impl<E> DominanceExt for EntityGraph<E> {
             idx
         }).collect();
 
-        for d in graph.node_indices().filter(|nx| !roots.contains(nx)) {
+        for d in graph.node_identifiers().filter(|nx| !roots.contains(nx)) {
             mapping.insert(d, tree.add_node(d));
         }
 
-        for d in graph.node_indices() {
+        for d in graph.node_identifiers() {
             if let Some(idom) = dominators.immediate_dominator(d) {
                 tree.add_edge(mapping[&idom], mapping[&d], ());
             }
@@ -123,13 +123,13 @@ impl<E> DominanceExt for EntityGraph<E> {
         }
     }
 
-    fn dominance_frontier(&self) -> DominanceFrontier {
+    fn dominance_frontier(self) -> DominanceFrontier {
         let graph = self;
         let mut mapping = DominanceFrontier::new();
 
         let dominators = dominance::simple_fast(graph);
 
-        for d in graph.node_indices() {
+        for d in graph.node_identifiers() {
             let idom = if let Some(idom) = dominators.immediate_dominator(d) {
                 idom
             } else {
@@ -152,7 +152,7 @@ impl<E> DominanceExt for EntityGraph<E> {
         mapping
     }
 
-    fn dominance(&self) -> Dominance {
+    fn dominance(self) -> Dominance {
         let graph = self;
 
         let mut tree = DiGraph::new();
@@ -168,7 +168,7 @@ impl<E> DominanceExt for EntityGraph<E> {
             idx
         }).collect();
 
-        for d in graph.node_indices() {
+        for d in graph.node_identifiers() {
             if !roots.contains(&d) {
                 tree_mapping.insert(d, tree.add_node(d));
             }
@@ -192,7 +192,7 @@ impl<E> DominanceExt for EntityGraph<E> {
             }
         }
 
-        for d in graph.node_indices() {
+        for d in graph.node_identifiers() {
             if let Some(idom) = dominators.immediate_dominator(d) {
                 tree.add_edge(tree_mapping[&idom], tree_mapping[&d], ());
             }

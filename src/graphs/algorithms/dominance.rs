@@ -12,7 +12,6 @@
 //! strictly dominates **B** and there does not exist any node **C** where **A**
 //! dominates **C** and **C** dominates **B**.
 
-use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::hash_map::Iter;
 use std::collections::{HashMap, HashSet};
@@ -21,7 +20,7 @@ use std::hash::Hash;
 use petgraph::graph::NodeIndex;
 
 use crate::graphs::traversals::{PostOrder, Traversal};
-use crate::types::EntityGraph;
+use crate::types::AsEntityGraph;
 
 /// The dominance relation for some graph and root.
 #[derive(Debug, Clone)]
@@ -163,11 +162,10 @@ const UNDEFINED: usize = ::std::usize::MAX;
 /// to ~30,000 vertices.
 ///
 /// [0]: http://www.cs.rice.edu/~keith/EMBED/dom.pdf
-pub fn simple_fast<E, G>(graph: G) -> Dominators<NodeIndex>
+pub fn simple_fast<G>(graph: G) -> Dominators<NodeIndex>
 where
-    G: Borrow<EntityGraph<E>>
+    G: AsEntityGraph,
 {
-    let graph = graph.borrow();
     let (roots, po, predecessor_sets) = simple_fast_po(graph);
     let length = po.len();
 
@@ -241,7 +239,6 @@ where
                 changed = true;
             }
         }
-
     }
 
     // All done! Translate the indices back into proper `G::NodeId`s.
@@ -255,7 +252,16 @@ where
             .enumerate()
             // here we remove the notion of a simulated root, and make any node dominated by it
             // dominate itself
-            .map(|(idx, dom_idx)| (po[idx], if *dom_idx == length { po[idx] } else { po[*dom_idx] }))
+            .map(|(idx, dom_idx)| {
+                (
+                    po[idx],
+                    if *dom_idx == length {
+                        po[idx]
+                    } else {
+                        po[*dom_idx]
+                    },
+                )
+            })
             .collect(),
     }
 }
@@ -296,14 +302,15 @@ where
 
 type PredecessorSets<NodeId> = HashMap<NodeId, HashSet<NodeId>>;
 
-fn simple_fast_po<E>(
-    graph: &EntityGraph<E>,
+fn simple_fast_po<G>(
+    graph: G,
 ) -> (
     HashSet<NodeIndex>,
     Vec<NodeIndex>,
     PredecessorSets<NodeIndex>,
 )
 where
+    G: AsEntityGraph,
 {
     let (roots, po) = PostOrder::into_queue_with_roots(graph);
     let mut predecessor_sets = HashMap::new();
@@ -326,9 +333,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::EntityGraph;
     use fugue::ir::address::AddressValue;
-    use fugue::ir::space::{AddressSpace, Space, SpaceKind};
     use fugue::ir::il::ecode::{EntityId, Location};
+    use fugue::ir::space::{AddressSpace, Space, SpaceKind};
 
     use std::sync::Arc;
 
@@ -367,13 +375,34 @@ mod tests {
         let spc = Space::new(SpaceKind::Processor, "ram", 8, 1, 0, None, 0);
         let aspc = Arc::new(AddressSpace::Space(spc));
 
-        let n1 = g.add_node(EntityId::new("blk", Location::new(AddressValue::new(aspc.clone(), 0u64), 0)));
-        let n2 = g.add_node(EntityId::new("blk", Location::new(AddressValue::new(aspc.clone(), 1u64), 0)));
-        let n3 = g.add_node(EntityId::new("blk", Location::new(AddressValue::new(aspc.clone(), 2u64), 0)));
-        let n4 = g.add_node(EntityId::new("blk", Location::new(AddressValue::new(aspc.clone(), 3u64), 0)));
-        let n5 = g.add_node(EntityId::new("blk", Location::new(AddressValue::new(aspc.clone(), 4u64), 0)));
-        let n6 = g.add_node(EntityId::new("blk", Location::new(AddressValue::new(aspc.clone(), 5u64), 0)));
-        let n7 = g.add_node(EntityId::new("blk", Location::new(AddressValue::new(aspc.clone(), 6u64), 0)));
+        let n1 = g.add_node(EntityId::new(
+            "blk",
+            Location::new(AddressValue::new(aspc.clone(), 0u64), 0),
+        ));
+        let n2 = g.add_node(EntityId::new(
+            "blk",
+            Location::new(AddressValue::new(aspc.clone(), 1u64), 0),
+        ));
+        let n3 = g.add_node(EntityId::new(
+            "blk",
+            Location::new(AddressValue::new(aspc.clone(), 2u64), 0),
+        ));
+        let n4 = g.add_node(EntityId::new(
+            "blk",
+            Location::new(AddressValue::new(aspc.clone(), 3u64), 0),
+        ));
+        let n5 = g.add_node(EntityId::new(
+            "blk",
+            Location::new(AddressValue::new(aspc.clone(), 4u64), 0),
+        ));
+        let n6 = g.add_node(EntityId::new(
+            "blk",
+            Location::new(AddressValue::new(aspc.clone(), 5u64), 0),
+        ));
+        let n7 = g.add_node(EntityId::new(
+            "blk",
+            Location::new(AddressValue::new(aspc.clone(), 6u64), 0),
+        ));
 
         // g1 (root: n1)
         g.add_edge(n1, n2, ());
@@ -387,7 +416,7 @@ mod tests {
         g.add_edge(n7, n5, ());
         g.add_edge(n5, n6, ());
 
-        let doms = simple_fast(g);
+        let doms = simple_fast(&g);
 
         println!("{:#?}", doms.dominators);
     }

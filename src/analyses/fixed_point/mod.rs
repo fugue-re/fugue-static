@@ -35,7 +35,7 @@ where O: Clone + Default + PartialOrd {
     fn analyse_with<C>(&mut self, graph: &'a CFG, always_merge: bool) -> Result<C, AnalysisError<Self::Err>>
     where C: EntityValueCollector<O> {
         let mut results = C::default();
-        let mut queue = PostOrder::into_queue(graph);
+        let mut queue = PostOrder::into_queue(&**graph);
 
         while let Some(node) = queue.pop_front() {
             let current_in = graph
@@ -106,7 +106,7 @@ where O: Clone + Default + PartialOrd {
     fn analyse_with<C>(&mut self, graph: &'a CFG, always_merge: bool) -> Result<C, AnalysisError<Self::Err>>
     where C: EntityValueCollector<O> {
         let mut results = C::default();
-        let mut queue = RevPostOrder::into_queue(graph);
+        let mut queue = RevPostOrder::into_queue(&**graph);
 
         while let Some(node) = queue.pop_front() {
             let current_in = graph

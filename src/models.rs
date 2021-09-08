@@ -1,8 +1,14 @@
 pub mod block;
 pub use block::{Block, BlockLifter};
 
+pub mod cdg;
+pub use cdg::CDG;
+
 pub mod cfg;
 pub use cfg::CFG;
+
+pub mod ddg;
+pub use ddg::DDG;
 
 pub mod function;
 pub use function::{Function, FunctionLifter};

@@ -6,11 +6,10 @@ use petgraph::algo::kosaraju_scc;
 use petgraph::graph::IndexType;
 use petgraph::visit::{IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, GraphRef, NodeCount, Reversed, VisitMap, Visitable};
 
-use std::borrow::Borrow;
 use std::collections::VecDeque;
 
 use crate::graphs::traversals::{PostOrder, Traversal};
-use crate::types::EntityGraph;
+use crate::types::AsEntityGraph;
 
 /// Visit nodes in a depth-first-search (DFS) emitting nodes in reverse postorder
 /// (each node after all its descendants have been emitted).
@@ -150,9 +149,9 @@ where
 }
 
 impl<'a> Traversal<'a> for RevPostOrder<NodeIndex> {
-    fn into_queue_with_roots<E, G>(graph: G) -> (Vec<NodeIndex>, VecDeque<NodeIndex>)
-    where G: Borrow<EntityGraph<E>> + 'a {
-        let g = graph.borrow();
+    fn into_queue_with_roots<G>(graph: G) -> (Vec<NodeIndex>, VecDeque<NodeIndex>)
+    where G: AsEntityGraph + 'a {
+        let g = graph;
         let mut traversal = PostOrder::new(g);
         let mut queue = VecDeque::new();
 

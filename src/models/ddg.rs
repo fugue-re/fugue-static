@@ -8,5 +8,88 @@
 
 // https://llvm.org/docs/DependenceGraphs/index.html#id6
 
+use std::collections::{HashMap, HashSet};
+
+use petgraph::graph::NodeIndex;
+use fugue::ir::il::ecode::{EntityId, Var};
+
+use crate::models::CFG;
+use crate::graphs::traversals::{RevPostOrder, Traversal};
+use crate::traits::Variables;
+use crate::types::EntityGraph;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DependenceKind {
+    Flow,   // E1 writes var E2 later reads (reaching definitions)
+    Anti,   // E1 reads var E2 later writes (use-def when E1's use in E2's kill -> killed liveness)
+    Input,  // E1 reads var E2 later reads (use-use)
+    Output, // E1 writes var E2 later writes (def-def when E1's def in E2's kill)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Dependence {
+    kind: DependenceKind,
+    variable: Var,
+}
+
+#[derive(Debug, Clone)]
+pub struct PIBlock(HashSet<EntityId>); // SSC blocks -> do we need them?
+
 #[derive(Clone)]
-pub struct DDG;
+pub struct DDG {
+    graph: EntityGraph<DependenceKind>,
+    entity_mapping: HashMap<EntityId, NodeIndex>,
+    pi_blocks: Vec<PIBlock>,
+}
+
+impl DDG {
+    // NOTE: assumes that cfg is in SSA form
+    pub fn new(_cfg: &CFG) -> Self {
+        todo!()
+
+        /*
+        let mut entity_mapping = HashMap::new();
+        let mut ddg = EntityGraph::new();
+
+        for blk in cfg.blocks().values() {
+            // NOTE:
+            // phi's are implicit and have a stable ordering
+            // we can treat them as a single block of defs/uses since
+            // we will never have a situation where one phi def kills
+            // another one
+            //
+            if !blk.phis().is_empty() {
+                let pid = EntityId::new("phi", blk.location().clone());
+                entity_mapping.insert(pid.clone(), ddg.add_node(pid));
+            }
+
+            for stmt in blk.operations().iter() {
+                let sid = stmt.id();
+                entity_mapping.insert(sid.clone(), ddg.add_node(sid.clone()));
+            }
+        }
+
+        let mut defs = HashMap::new(); // Var -> HashSet<Loc>
+        let mut uses = HashMap::new(); // Var -> HashSet<Loc>
+
+        // generate edges; we do a RPO traversal of the CFG; since
+        // we already have the CFG in SSA form, this should enable
+        // use to get any Input/Output/Anti
+        for nx in RevPostOrder::into_queue(&**cfg).into_iter() {
+            let blk = cfg.block_at(nx);
+            if !blk.phis().is_empty() {
+                let pid = EntityId::new("phi", blk.location().clone());
+            }
+
+            for stmt in blk.operations().iter() {
+                let ldefs = stmt.defined_variables::<HashSet<_>>();
+                let luses = stmt.used_variables::<HashSet<_>>();
+            }
+        }
+
+        // we can do a separate pass for flow to get the remaining RDs;
+        // the SSA form implicitly encodes this information anyway?
+        todo!()
+        */
+    }
+}

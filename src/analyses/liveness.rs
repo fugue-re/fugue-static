@@ -88,4 +88,3 @@ impl<'ecode> FixedPointBackward<'ecode, BTreeSet<&'ecode Var>> for LocalsLivenes
         })
     }
 }
-

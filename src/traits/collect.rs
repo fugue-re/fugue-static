@@ -16,6 +16,12 @@ pub trait ValueRefCollector<'ecode, V>: Default {
     fn retain_difference_ref(&mut self, other: &Self);
 }
 
+pub trait EntityValueRefCollector<'ecode, V>: Default {
+    fn insert_ref(&mut self, id: EntityId, value: &'ecode V);
+    fn merge_ref(&mut self, other: &mut Self);
+    fn retain_difference_ref(&mut self, other: &Self);
+}
+
 pub trait ValueMutCollector<'ecode, V>: Default {
     fn insert_mut(&mut self, value: &'ecode mut V);
     fn merge_mut(&mut self, other: &mut Self);
@@ -91,6 +97,24 @@ impl<'ecode, V> ValueRefCollector<'ecode, V> for HashSet<&'ecode V> where V: Eq 
     }
 }
 
+impl<'ecode, V> EntityValueRefCollector<'ecode, V> for HashSet<(EntityId, &'ecode V)> where V: Eq + Hash {
+    #[inline(always)]
+    fn insert_ref(&mut self, id: EntityId, var: &'ecode V) {
+        self.insert((id, var));
+    }
+
+    #[inline(always)]
+    fn merge_ref(&mut self, other: &mut Self) {
+        self.extend(other.drain());
+    }
+
+    #[inline(always)]
+    fn retain_difference_ref(&mut self, other: &Self) {
+        use std::ops::Sub;
+        *self = self.sub(other);
+    }
+}
+
 impl<'ecode, V> ValueMutCollector<'ecode, V> for HashSet<&'ecode mut V> where V: Eq + Hash {
     #[inline(always)]
     fn insert_mut(&mut self, var: &'ecode mut V) {
@@ -129,6 +153,24 @@ impl<'ecode, V> ValueRefCollector<'ecode, V> for BTreeSet<&'ecode V> where V: Or
     #[inline(always)]
     fn insert_ref(&mut self, var: &'ecode V) {
         self.insert(var);
+    }
+
+    #[inline(always)]
+    fn merge_ref(&mut self, other: &mut Self) {
+        self.append(other);
+    }
+
+    #[inline(always)]
+    fn retain_difference_ref(&mut self, other: &Self) {
+        use std::ops::Sub;
+        *self = self.sub(other)
+    }
+}
+
+impl<'ecode, V> EntityValueRefCollector<'ecode, V> for BTreeSet<(EntityId, &'ecode V)> where V: Ord {
+    #[inline(always)]
+    fn insert_ref(&mut self, id: EntityId, var: &'ecode V) {
+        self.insert((id, var));
     }
 
     #[inline(always)]

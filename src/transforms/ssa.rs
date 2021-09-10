@@ -10,7 +10,7 @@ use crate::models::CFG;
 use crate::traits::Variables;
 use crate::traits::dominance::{Dominance, DominanceTree};
 
-mod simple_var;
+pub mod simple_var;
 use simple_var::SimpleVar;
 
 type SSAMapping<'a> = HashMap<SimpleVar<'a>, usize>;

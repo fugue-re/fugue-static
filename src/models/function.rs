@@ -1,12 +1,12 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use fugue::db;
 
-use fugue::ir::Translator;
 use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
+use fugue::ir::Translator;
 
-use crate::models::{Block, BlockLifter, Program};
 use crate::models::cfg::{BranchKind, CFG};
+use crate::models::{Block, BlockLifter, Program};
 use crate::traits::StmtExt;
 
 use thiserror::Error;
@@ -22,6 +22,7 @@ pub struct Function {
     symbol: String,
     location: Location,
     blocks: HashSet<EntityId>,
+    callers: HashMap<EntityId, EntityId>,
 }
 
 impl Function {
@@ -39,6 +40,14 @@ impl Function {
 
     pub fn blocks_mut(&mut self) -> &mut HashSet<EntityId> {
         &mut self.blocks
+    }
+
+    pub fn callers(&self) -> &HashMap<EntityId, EntityId> {
+        &self.callers
+    }
+
+    pub fn callers_mut(&mut self) -> &mut HashMap<EntityId, EntityId> {
+        &mut self.callers
     }
 
     pub fn cfg<'db>(&self, program: &'db Program) -> CFG<'db> {
@@ -63,21 +72,27 @@ impl Function {
                         let tgt = &blks[&tgt_id];
                         cfg.add_cond(blk, tgt);
                     }
-                },
+                }
                 Stmt::Branch(BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());
                     if self.blocks.contains(&tgt_id) {
                         let tgt = &blks[&tgt_id];
                         cfg.add_jump(blk, tgt);
                     }
-                },
+                }
                 _ => (),
             }
 
             let blkx = cfg.block_node(blkid).unwrap();
             for tgt in blk.next_blocks() {
                 if let Some(nx) = cfg.block_node(tgt) {
-                    if !cfg.contains_edge(blkx, nx) && !blk.operations().last().map(|op| op.is_return()).unwrap_or(false) {
+                    if !cfg.contains_edge(blkx, nx)
+                        && !blk
+                            .operations()
+                            .last()
+                            .map(|op| op.is_return())
+                            .unwrap_or(false)
+                    {
                         cfg.add_edge(blkx, nx, BranchKind::Fall);
                     }
                 }
@@ -89,23 +104,29 @@ impl Function {
 
 pub struct FunctionLifter<'trans> {
     translator: &'trans Translator,
+    database: &'trans db::Database,
     block_lifter: BlockLifter<'trans>,
 }
 
 impl<'trans> FunctionLifter<'trans> {
-    pub fn new(translator: &'trans Translator) -> Self {
+    pub fn new(translator: &'trans Translator, database: &'trans db::Database) -> Self {
         Self {
             translator,
+            database,
             block_lifter: BlockLifter::new(translator),
         }
     }
 
-    pub fn from_function(&mut self, f: &db::Function) -> Result<(Entity<Function>, Vec<Entity<Block>>), Error> {
+    pub fn from_function(
+        &mut self,
+        f: &db::Function,
+    ) -> Result<(Entity<Function>, Vec<Entity<Block>>), Error> {
         let mut blocks = Vec::new();
         let mut function = Function {
             symbol: f.name().to_string(),
             location: Location::new(self.translator.address(f.address()), 0),
             blocks: HashSet::new(),
+            callers: HashMap::new(),
         };
 
         for b in f.blocks() {
@@ -119,6 +140,24 @@ impl<'trans> FunctionLifter<'trans> {
             }
 
             blocks.extend(blks.into_iter());
+        }
+
+        for r in f
+            .references()
+            .iter()
+            .filter(|r| r.is_call() && !r.source_id().is_invalid())
+        {
+            if let Some(sfcn) = self.database.functions().get(r.source_id().index()) {
+                let fid = EntityId::new(
+                    "fcn",
+                    Location::new(self.translator.address(sfcn.address()), 0),
+                );
+                let sid = EntityId::new(
+                    "stmt",
+                    Location::new(self.translator.address(r.address()), 0),
+                );
+                function.callers.insert(fid, sid);
+            }
         }
 
         let entity = Entity::new("fcn", function.location.clone(), function);

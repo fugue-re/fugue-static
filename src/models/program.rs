@@ -1,16 +1,16 @@
 use fugue::db::Database;
 
-use fugue::ir::Translator;
 use fugue::ir::address::IntoAddress;
+use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
 use fugue::ir::space::{AddressSpace, SpaceKind};
-use fugue::ir::il::ecode::{BranchTarget, EntityId, Entity, Location, Stmt};
+use fugue::ir::Translator;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::models::Block;
-use crate::models::CFG;
 use crate::models::{Function, FunctionLifter};
+use crate::models::{CFG, CG};
 use crate::types::EntityMap;
 
 use thiserror::Error;
@@ -44,13 +44,13 @@ impl<'db> Program<'db> {
                 SpaceKind::Processor,
                 "stack",
                 address_size,
-                1, // word size
+                1,    // word size
                 None, // properties
-                0, // delay
+                0,    // delay
             )
         };
 
-        let mut function_lifter = FunctionLifter::new(&trans);
+        let mut function_lifter = FunctionLifter::new(&trans, database);
 
         let mut functions = EntityMap::default();
         let mut blocks = EntityMap::default();
@@ -96,12 +96,14 @@ impl<'db> Program<'db> {
         let address = address.into_address_value(self.translator.manager().default_space());
         let location = Location::new(address, 0);
 
-        self.functions_by_location.get(&location)
+        self.functions_by_location
+            .get(&location)
             .and_then(|id| self.functions.get(id))
     }
 
     pub fn function_by_symbol<S: AsRef<str>>(&self, symbol: S) -> Option<&Entity<Function>> {
-        self.functions_by_symbol.get(symbol.as_ref())
+        self.functions_by_symbol
+            .get(symbol.as_ref())
             .and_then(|id| self.functions.get(id))
     }
 
@@ -111,6 +113,24 @@ impl<'db> Program<'db> {
 
     pub fn functions_mut(&mut self) -> &mut EntityMap<Function> {
         &mut self.functions
+    }
+
+    pub fn cg(&self) -> CG {
+        let mut cg = CG::new();
+
+        // add all functions
+        for fcn in self.functions.values() {
+            cg.add_function(fcn);
+        }
+
+        // add all calls
+        for fcn in self.functions.values() {
+            for (caller, stmt) in fcn.callers().iter().filter_map(|(id, sid)| self.functions.get(id).map(|f| (f, sid))) {
+                cg.add_call_via(caller, fcn, stmt.clone());
+            }
+        }
+
+        cg
     }
 
     pub fn icfg(&self) -> CFG {
@@ -132,17 +152,17 @@ impl<'db> Program<'db> {
                     let tgt_id = EntityId::new("blk", location.clone());
                     let tgt = &self.blocks[&tgt_id];
                     icfg.add_call(blk, tgt);
-                },
+                }
                 Stmt::CBranch(_, BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());
                     let tgt = &self.blocks[&tgt_id];
                     icfg.add_cond(blk, tgt);
-                },
+                }
                 Stmt::Branch(BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());
                     let tgt = &self.blocks[&tgt_id];
                     icfg.add_jump(blk, tgt);
-                },
+                }
                 _ => (),
             }
         }

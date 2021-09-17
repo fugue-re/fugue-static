@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use fixedbitset::FixedBitSet;
 
+use petgraph::data::DataMap;
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableDiGraph as DiGraph;
 use petgraph::visit::{
@@ -18,6 +19,7 @@ pub type EntityGraph<E> = DiGraph<EntityId, E>;
 
 pub trait AsEntityGraph:
     GraphRef
+    + DataMap<NodeId=NodeIndex, NodeWeight=EntityId>
     + IntoNeighborsDirected
     + IntoNodeIdentifiers
     + IntoNodeReferences

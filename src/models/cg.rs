@@ -1,9 +1,11 @@
 use fugue::ir::il::ecode::{EntityId, Location};
 
+use petgraph::EdgeDirection;
 use petgraph::graph::NodeIndex;
 
 use std::borrow::{Borrow, BorrowMut, Cow};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::ops::{Deref, DerefMut};
 
 use crate::models::Function;
@@ -18,6 +20,16 @@ pub struct CallVia(Option<EntityId>);
 impl Default for CallVia {
     fn default() -> Self {
         Self(None)
+    }
+}
+
+impl fmt::Display for CallVia {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(ref id) = &self.0 {
+            write!(f, "calls via: {}", id)
+        } else {
+            write!(f, "calls")
+        }
     }
 }
 
@@ -141,6 +153,26 @@ impl<'e> CG<'e> {
         let tx = self.add_function(tgt);
 
         self.graph.add_edge(sx, tx, via.into());
+    }
+
+    fn called_from_aux(&self, function: &EntityId, bound: usize, called: &mut HashSet<EntityRef<'e, Function>>) {
+        if bound == 0 {
+            return
+        }
+
+        if let Some(nx) = self.function_node(function) {
+            for nd in self.graph.neighbors_directed(nx, EdgeDirection::Outgoing) {
+                let eid = self.function_at(nd);
+                called.insert(eid.clone()); // cheap; Cow
+                self.called_from_aux(eid.id(), bound - 1, called);
+            }
+        }
+    }
+
+    pub fn called_from(&self, function: &EntityId, bound: usize) -> HashSet<EntityRef<'e, Function>> {
+        let mut called = HashSet::new();
+        self.called_from_aux(function, bound, &mut called);
+        called
     }
 
     pub fn function_node(&self, function: &EntityId) -> Option<NodeIndex> {

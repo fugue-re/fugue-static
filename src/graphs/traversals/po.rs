@@ -64,16 +64,16 @@ where
     where
         G: GraphRef + IntoNeighborsDirected + IntoNodeIdentifiers + Visitable<NodeId = N, Map = FixedBitSet>,
     {
-        let mut scc = kosaraju_scc(&graph);
-
         let start_neighbours = graph.node_identifiers()
             .filter(|nx| graph.neighbors_directed(*nx, Direction::Incoming).next().is_none())
             .collect::<Vec<_>>();
 
-        let start = if start_neighbours.is_empty() {
-            scc.pop().and_then(|mut cs| cs.pop())
+        let (start, scc) = if start_neighbours.is_empty() {
+            let mut scc = kosaraju_scc(&graph);
+
+            (scc.pop().and_then(|cs| Some(cs[0])), scc)
         } else {
-            None
+            (None, Vec::default())
         };
 
         let order = PostOrder {
@@ -96,7 +96,7 @@ where
     /// Return the next node in the traversal, or `None` if the traversal is done.
     pub fn next<G>(&mut self, graph: G) -> Option<N>
     where
-        G: IntoNeighbors<NodeId = N> + NodeCount + IntoNeighborsDirected,
+        G: GraphRef + IntoNeighborsDirected + IntoNodeIdentifiers + NodeCount + Visitable<NodeId = N, Map = FixedBitSet>,
     {
         'outer: loop {
             while let Some(&nx) = self.stack.last() {
@@ -130,6 +130,10 @@ where
             }
 
             if self.finished.count_ones(..) != graph.node_count() {
+                if self.scc.is_empty() {
+                    self.scc = kosaraju_scc(&graph);
+                }
+
                 while let Some(cs) = self.scc.pop() {
                     if !self.discovered.is_visited(&cs[0]) {
                         self.start_neighbours.push(cs[0]);

@@ -1,8 +1,13 @@
 use std::collections::{BTreeSet, HashSet};
 use std::collections::{BTreeMap, HashMap};
+
+use interval_tree::{IntervalMap, IntervalSet};
+
 use std::hash::Hash;
 
 use fugue::ir::il::ecode::EntityId;
+
+use crate::traits::AsInterval;
 
 pub trait EntityValueCollector<V>: Default {
     fn get(&self, id: &EntityId) -> Option<&V>;
@@ -199,5 +204,88 @@ impl<'ecode, V> ValueMutCollector<'ecode, V> for BTreeSet<&'ecode mut V> where V
     #[inline(always)]
     fn retain_difference_mut(&mut self, other: &Self) {
         self.retain(|v| !other.contains(v))
+    }
+}
+
+impl<'ecode, V, I> ValueRefCollector<'ecode, V> for IntervalSet<I> where V: AsInterval<I>, I: Clone + Ord {
+    #[inline(always)]
+    fn insert_ref(&mut self, var: &'ecode V) {
+        let iv = var.as_interval();
+        self.insert(iv, ());
+    }
+
+    #[inline(always)]
+    fn merge_ref(&mut self, other: &mut Self) {
+        let other = std::mem::take(other);
+        self.extend(other.into_iter());
+    }
+
+    #[inline(always)]
+    fn retain_difference_ref(&mut self, other: &Self) {
+        for iv in other.iter() {
+            self.remove_exact(iv.0)
+        }
+    }
+}
+
+impl<'ecode, V, I> ValueRefCollector<'ecode, V> for IntervalMap<I, &'ecode V> where V: AsInterval<I>, I: Clone + Ord {
+    #[inline(always)]
+    fn insert_ref(&mut self, var: &'ecode V) {
+        let iv = var.as_interval();
+        self.insert(iv, var);
+    }
+
+    #[inline(always)]
+    fn merge_ref(&mut self, other: &mut Self) {
+        let other = std::mem::take(other);
+        self.extend(other.into_iter());
+    }
+
+    #[inline(always)]
+    fn retain_difference_ref(&mut self, other: &Self) {
+        for iv in other.iter() {
+            self.remove_exact(iv.0)
+        }
+    }
+}
+
+impl<'ecode, V, I> ValueMutCollector<'ecode, V> for IntervalMap<I, &'ecode mut V> where V: AsInterval<I>, I: Clone + Ord {
+    #[inline(always)]
+    fn insert_mut(&mut self, var: &'ecode mut V) {
+        let iv = var.as_interval();
+        self.insert(iv, var);
+    }
+
+    #[inline(always)]
+    fn merge_mut(&mut self, other: &mut Self) {
+        let other = std::mem::take(other);
+        self.extend(other.into_iter());
+    }
+
+    #[inline(always)]
+    fn retain_difference_mut(&mut self, other: &Self) {
+        for iv in other.iter() {
+            self.remove_exact(iv.0)
+        }
+    }
+}
+
+impl<'ecode, V, I> EntityValueRefCollector<'ecode, V> for IntervalMap<I, (EntityId, &'ecode V)> where V: AsInterval<I>, I: Clone + Ord {
+    #[inline(always)]
+    fn insert_ref(&mut self, id: EntityId, var: &'ecode V) {
+        self.insert(var.as_interval(), (id, var));
+    }
+
+    #[inline(always)]
+    fn merge_ref(&mut self, other: &mut Self) {
+        let other = std::mem::take(other);
+        self.extend(other.into_iter());
+    }
+
+    #[inline(always)]
+    fn retain_difference_ref(&mut self, other: &Self) {
+        for iv in other.iter() {
+            self.remove_exact(iv.0)
+        }
     }
 }

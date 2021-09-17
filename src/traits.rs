@@ -4,6 +4,9 @@ pub use collect::{ValueRefCollector, ValueMutCollector};
 pub mod dominance;
 pub use dominance::*;
 
+pub mod interval;
+pub use interval::AsInterval;
+
 pub mod stmt;
 pub use stmt::StmtExt;
 

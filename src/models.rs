@@ -7,6 +7,9 @@ pub use cdg::CDG;
 pub mod cfg;
 pub use cfg::CFG;
 
+pub mod cg;
+pub use cg::CG;
+
 pub mod ddg;
 pub use ddg::DDG;
 

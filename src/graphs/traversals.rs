@@ -18,5 +18,4 @@ pub trait Traversal<'a> {
         where G: AsEntityGraph + 'a {
         Self::into_queue_with_roots(graph).1
     }
-
 }

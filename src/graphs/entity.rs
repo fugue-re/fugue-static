@@ -3,14 +3,15 @@ use fxhash::FxBuildHasher;
 
 use petgraph::algo::{has_path_connecting, kosaraju_scc, DfsSpace};
 use petgraph::graph::NodeIndex;
-use petgraph::stable_graph::StableDiGraph;
+use petgraph::stable_graph::{Neighbors, StableDiGraph, WalkNeighbors};
 use petgraph::Direction;
 
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::ops::Deref;
 
-use crate::traits::{EntityRef, IntoEntityRef};
+use crate::traits::IntoEntityRef;
+use crate::types::EntityRef;
 
 use super::traversals::{PostOrder, RevPostOrder};
 
@@ -22,6 +23,7 @@ type IndexSet<K> = indexmap::IndexSet<K, FxBuildHasher>;
 
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
 pub struct VertexIndex<T> {
     index: NodeIndex,
     #[educe(
@@ -64,11 +66,60 @@ impl<T> From<NodeIndex> for VertexIndex<T> {
     }
 }
 
+#[derive(educe::Educe)]
+#[educe(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct EdgeIndex<T> {
+    index: petgraph::graph::EdgeIndex,
+    #[educe(
+        Debug(ignore),
+        PartialEq(ignore),
+        Eq(ignore),
+        PartialOrd(ignore),
+        Ord(ignore),
+        Hash(ignore)
+    )]
+    marker: PhantomData<T>,
+}
+
+impl<T> AsRef<petgraph::graph::EdgeIndex> for EdgeIndex<T> {
+    fn as_ref(&self) -> &petgraph::graph::EdgeIndex {
+        &self.index
+    }
+}
+
+impl<T> Deref for EdgeIndex<T> {
+    type Target = petgraph::graph::EdgeIndex;
+
+    fn deref(&self) -> &Self::Target {
+        &self.index
+    }
+}
+
+impl<T> From<EdgeIndex<T>> for petgraph::graph::EdgeIndex {
+    fn from(slf: EdgeIndex<T>) -> Self {
+        slf.index
+    }
+}
+
+impl<T> From<petgraph::graph::EdgeIndex> for EdgeIndex<T> {
+    fn from(index: petgraph::graph::EdgeIndex) -> Self {
+        Self {
+            index,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<'a, V, E> AsRef<StableDiGraph<EntityId, E>> for EntityGraph<'a, V, E>
+where V: Clone {
+    fn as_ref(&self) -> &StableDiGraph<EntityId, E> {
+        &self.entity_graph
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct EntityGraph<'a, V, E>
-where
-    V: Clone,
-{
+pub struct EntityGraph<'a, V, E> where V: Clone {
     pub(crate) entity_graph: StableDiGraph<EntityId, E>,
 
     pub(crate) entity_mapping: IndexMap<EntityId, VertexIndex<V>>,
@@ -143,6 +194,20 @@ where
         self.entities.get_mut(id).unwrap()
     }
 
+    pub fn contains_edge(&self, vs: VertexIndex<V>, vt: VertexIndex<V>) -> bool {
+        self.entity_graph.contains_edge(*vs, *vt)
+    }
+
+    pub fn edge(&self, vs: VertexIndex<V>, vt: VertexIndex<V>) -> Option<&E> {
+        self.entity_graph.find_edge(*vs, *vt)
+            .and_then(|e| self.entity_graph.edge_weight(e))
+    }
+
+    pub fn edge_mut(&mut self, vs: VertexIndex<V>, vt: VertexIndex<V>) -> Option<&mut E> {
+        self.entity_graph.find_edge(*vs, *vt)
+            .and_then(move |e| self.entity_graph.edge_weight_mut(e))
+    }
+
     pub fn add_entity<T>(&mut self, entity: T) -> VertexIndex<V>
     where
         T: IntoEntityRef<'a, T = V>,
@@ -168,6 +233,10 @@ where
         let nx = self.add_entity(er);
         self.entity_roots.insert((id, nx));
         nx
+    }
+
+    pub fn add_vertex_relation(&mut self, vs: VertexIndex<V>, vt: VertexIndex<V>, relation: E) {
+        self.entity_graph.add_edge(*vs, *vt, relation);
     }
 
     pub fn add_relation<S, T>(
@@ -252,6 +321,22 @@ where
             .for_each(|vx| self.make_root_entity(vx))
     }
 
+    pub fn predecessors<'g>(&'g self, vertex: VertexIndex<V>) -> VertexEdgeIter<'g, 'a, V, E> {
+        VertexEdgeIter::new(
+            self,
+            self.entity_graph
+                .neighbors_directed(vertex.into(), Direction::Incoming),
+        )
+    }
+
+    pub fn successors<'g>(&'g self, vertex: VertexIndex<V>) -> VertexEdgeIter<'g, 'a, V, E> {
+        VertexEdgeIter::new(
+            self,
+            self.entity_graph
+                .neighbors_directed(vertex.into(), Direction::Outgoing),
+        )
+    }
+
     pub fn post_order<'g>(&'g self) -> PostOrderIter<'g, 'a, V, E> {
         PostOrderIter::new(self)
     }
@@ -261,30 +346,119 @@ where
     }
 }
 
-pub struct PostOrderIter<'g, 'a, V, E> where V: Clone {
+#[derive(educe::Educe)]
+#[educe(Clone)]
+pub struct VertexEdgeIter<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    graph: &'g EntityGraph<'a, V, E>,
+    traverse: WalkNeighbors<petgraph::graph::DefaultIx>,
+    size_hint: (usize, Option<usize>),
+}
+
+impl<'g, 'a, V, E> VertexEdgeIter<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    fn new(graph: &'g EntityGraph<'a, V, E>, traverse: Neighbors<'g, E>) -> Self {
+        Self {
+            graph,
+            traverse: traverse.detach(),
+            size_hint: traverse.size_hint(),
+        }
+    }
+
+    pub fn detach(self) -> VertexEdgeDetachedIter<V, E> {
+        VertexEdgeDetachedIter {
+            traverse: self.traverse,
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<'g, 'a, V, E> Iterator for VertexEdgeIter<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    type Item = (VertexIndex<V>, EdgeIndex<E>);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let v = self.traverse
+            .next(&self.graph.entity_graph)
+            .map(|(e, v)| (VertexIndex::from(v), EdgeIndex::from(e)));
+        if v.is_some() {
+            let mut h = &mut self.size_hint;
+            h.0 = if h.0 != 0 { h.0 - 1 } else { 0 };
+            h.1 = h.1.map(|v| if v != 0 { v - 1 } else { 0 });
+        }
+        v
+    }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.size_hint
+    }
+}
+
+#[derive(educe::Educe)]
+#[educe(Clone)]
+#[repr(transparent)]
+pub struct VertexEdgeDetachedIter<V, E> {
+    traverse: WalkNeighbors<petgraph::graph::DefaultIx>,
+    marker: PhantomData<(V, E)>,
+}
+
+impl<V, E> VertexEdgeDetachedIter<V, E>
+where
+    V: Clone,
+{
+    #[inline(always)]
+    pub fn next(&mut self, graph: &EntityGraph<V, E>) -> Option<(VertexIndex<V>, EdgeIndex<E>)> {
+        self.traverse
+            .next(&graph.entity_graph)
+            .map(|(e, v)| (VertexIndex::from(v), EdgeIndex::from(e)))
+    }
+}
+
+#[derive(educe::Educe)]
+#[educe(Clone)]
+pub struct PostOrderIter<'g, 'a, V, E>
+where
+    V: Clone,
+{
     graph: &'g EntityGraph<'a, V, E>,
     traverse: PostOrder<NodeIndex>,
 }
 
+#[derive(educe::Educe)]
+#[educe(Clone)]
+#[repr(transparent)]
 pub struct PostOrderDetachedIter<V, E> {
     traverse: PostOrder<NodeIndex>,
     marker: PhantomData<(V, E)>,
 }
 
-impl<'g, 'a, V, E> PostOrderIter<'g, 'a, V, E> where V: Clone {
+impl<'g, 'a, V, E> PostOrderIter<'g, 'a, V, E>
+where
+    V: Clone,
+{
     fn new(graph: &'g EntityGraph<'a, V, E>) -> Self {
         let mut traverse = PostOrder::new(&graph.entity_graph);
-        traverse.start_neighbours
-            .extend(graph.entity_roots.iter().map(|(_, vx)| -> NodeIndex { **vx }));
+        traverse.start_neighbours.extend(
+            graph
+                .entity_roots
+                .iter()
+                .map(|(_, vx)| -> NodeIndex { **vx }),
+        );
 
-        Self {
-            graph,
-            traverse,
-        }
+        Self { graph, traverse }
     }
 
     pub fn starting_vertices(self) -> Vec<VertexIndex<V>> {
-        self.traverse.start_neighbours
+        self.traverse
+            .start_neighbours
             .into_iter()
             .map(VertexIndex::from)
             .collect()
@@ -298,7 +472,10 @@ impl<'g, 'a, V, E> PostOrderIter<'g, 'a, V, E> where V: Clone {
     }
 }
 
-impl<V, E> PostOrderDetachedIter<V, E> where V: Clone {
+impl<V, E> PostOrderDetachedIter<V, E>
+where
+    V: Clone,
+{
     pub fn next(&mut self, graph: &EntityGraph<V, E>) -> Option<VertexIndex<V>> {
         self.traverse
             .next(&graph.entity_graph)
@@ -306,7 +483,8 @@ impl<V, E> PostOrderDetachedIter<V, E> where V: Clone {
     }
 
     pub fn starting_vertices(self) -> Vec<VertexIndex<V>> {
-        self.traverse.start_neighbours
+        self.traverse
+            .start_neighbours
             .into_iter()
             .map(VertexIndex::from)
             .collect()
@@ -327,14 +505,12 @@ where
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        self.traverse
-            .next(&self.graph.entity_graph)
-            .map(|nx| {
-                let vx = VertexIndex::from(nx);
-                let id = &self.graph.entity_graph[nx];
-                let er = &self.graph.entities[id];
-                (id, vx, er)
-            })
+        self.traverse.next(&self.graph.entity_graph).map(|nx| {
+            let vx = VertexIndex::from(nx);
+            let id = &self.graph.entity_graph[nx];
+            let er = &self.graph.entities[id];
+            (id, vx, er)
+        })
     }
 
     #[inline(always)]
@@ -356,17 +532,28 @@ where
     }
 }
 
-pub struct RevPostOrderIter<'g, 'a, V, E> where V: Clone {
+#[derive(educe::Educe)]
+#[educe(Clone)]
+pub struct RevPostOrderIter<'g, 'a, V, E>
+where
+    V: Clone,
+{
     graph: &'g EntityGraph<'a, V, E>,
     traverse: RevPostOrder<NodeIndex>,
 }
 
+#[derive(educe::Educe)]
+#[educe(Clone)]
+#[repr(transparent)]
 pub struct RevPostOrderDetachedIter<V, E> {
     traverse: RevPostOrder<NodeIndex>,
     marker: PhantomData<(V, E)>,
 }
 
-impl<'g, 'a, V, E> RevPostOrderIter<'g, 'a, V, E> where V: Clone {
+impl<'g, 'a, V, E> RevPostOrderIter<'g, 'a, V, E>
+where
+    V: Clone,
+{
     fn new(graph: &'g EntityGraph<'a, V, E>) -> Self {
         Self {
             graph,
@@ -375,7 +562,8 @@ impl<'g, 'a, V, E> RevPostOrderIter<'g, 'a, V, E> where V: Clone {
     }
 
     pub fn terminal_vertices(self) -> Vec<VertexIndex<V>> {
-        self.traverse.end_neighbours
+        self.traverse
+            .end_neighbours
             .into_iter()
             .map(VertexIndex::from)
             .collect()
@@ -389,7 +577,10 @@ impl<'g, 'a, V, E> RevPostOrderIter<'g, 'a, V, E> where V: Clone {
     }
 }
 
-impl<V, E> RevPostOrderDetachedIter<V, E> where V: Clone {
+impl<V, E> RevPostOrderDetachedIter<V, E>
+where
+    V: Clone,
+{
     pub fn next(&mut self, graph: &EntityGraph<V, E>) -> Option<VertexIndex<V>> {
         self.traverse
             .next(&graph.entity_graph)
@@ -397,7 +588,8 @@ impl<V, E> RevPostOrderDetachedIter<V, E> where V: Clone {
     }
 
     pub fn terminal_vertices(self) -> Vec<VertexIndex<V>> {
-        self.traverse.end_neighbours
+        self.traverse
+            .end_neighbours
             .into_iter()
             .map(VertexIndex::from)
             .collect()
@@ -418,14 +610,12 @@ where
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        self.traverse
-            .next(&self.graph.entity_graph)
-            .map(|nx| {
-                let vx = VertexIndex::from(nx);
-                let id = &self.graph.entity_graph[nx];
-                let er = &self.graph.entities[id];
-                (id, vx, er)
-            })
+        self.traverse.next(&self.graph.entity_graph).map(|nx| {
+            let vx = VertexIndex::from(nx);
+            let id = &self.graph.entity_graph[nx];
+            let er = &self.graph.entities[id];
+            (id, vx, er)
+        })
     }
 
     #[inline(always)]
@@ -447,6 +637,8 @@ where
     }
 }
 
+#[derive(educe::Educe)]
+#[educe(Clone)]
 pub struct EntityRefIter<'g, 'a, V, E>
 where
     V: Clone,
@@ -486,6 +678,8 @@ where
     }
 }
 
+#[derive(educe::Educe)]
+#[educe(Clone)]
 pub struct EntityRootIter<'g, 'a, V, E>
 where
     V: Clone,

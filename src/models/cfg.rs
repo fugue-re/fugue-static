@@ -1,18 +1,8 @@
-use std::borrow::{Borrow, BorrowMut, Cow};
-use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug, Display};
 use std::ops::{Deref, DerefMut};
 
-use petgraph::stable_graph::NodeIndex;
-
-use fugue::ir::il::ecode::{EntityId, Location};
-
-use crate::models::Block;
-
-use crate::traits::{EntityRef, IntoEntityRef};
-use crate::traits::dominance::*;
-use crate::types::{EntityRefMap, EntityGraph};
-
+use crate::graphs::entity::{AsEntityGraph, AsEntityGraphMut, EntityGraph, VertexIndex};
+use crate::traits::IntoEntityRef;
 
 #[derive(Debug, Copy, Clone)]
 pub enum BranchKind {
@@ -51,101 +41,66 @@ impl BranchKind {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct CFG<'e> {
-    pub(crate) graph: EntityGraph<BranchKind>,
-
-    pub(crate) entry_points: HashSet<(EntityId, NodeIndex)>,
-
-    pub(crate) entity_mapping: HashMap<EntityId, NodeIndex>,
-    pub(crate) blocks: EntityRefMap<'e, Block>,
+#[derive(Clone)]
+#[repr(transparent)]
+pub struct CFG<'a, V> where V: Clone {
+    pub(crate) graph: EntityGraph<'a, V, BranchKind>,
 }
 
-impl<'e> Borrow<EntityGraph<BranchKind>> for CFG<'e> {
-    fn borrow(&self) -> &EntityGraph<BranchKind> {
-        &self.graph
+impl<'a, V> Default for CFG<'a, V>
+where V: Clone {
+    fn default() -> Self {
+        Self { graph: EntityGraph::new() }
     }
 }
 
-impl<'e> Borrow<EntityGraph<BranchKind>> for &'_ CFG<'e> {
-    fn borrow(&self) -> &EntityGraph<BranchKind> {
-        &self.graph
-    }
-}
-
-impl<'e> Borrow<EntityGraph<BranchKind>> for &'_ mut CFG<'e> {
-    fn borrow(&self) -> &EntityGraph<BranchKind> {
-        &self.graph
-    }
-}
-
-impl<'e> BorrowMut<EntityGraph<BranchKind>> for CFG<'e> {
-    fn borrow_mut(&mut self) -> &mut EntityGraph<BranchKind> {
-        &mut self.graph
-    }
-}
-
-impl<'e> BorrowMut<EntityGraph<BranchKind>> for &'_ mut CFG<'e> {
-    fn borrow_mut(&mut self) -> &mut EntityGraph<BranchKind> {
-        &mut self.graph
-    }
-}
-
-impl<'e> AsRef<EntityGraph<BranchKind>> for CFG<'e> {
-    fn as_ref(&self) -> &EntityGraph<BranchKind> {
-        &self.graph
-    }
-}
-
-impl<'e> AsMut<EntityGraph<BranchKind>> for CFG<'e> {
-    fn as_mut(&mut self) -> &mut EntityGraph<BranchKind> {
-        &mut self.graph
-    }
-}
-
-impl<'e> Deref for CFG<'e> {
-    type Target = EntityGraph<BranchKind>;
+impl<'a, V> Deref for CFG<'a, V>
+where V: Clone {
+    type Target = EntityGraph<'a, V, BranchKind>;
 
     fn deref(&self) -> &Self::Target {
         &self.graph
     }
 }
 
-impl<'e> DerefMut for CFG<'e> {
+impl<'a, V> DerefMut for CFG<'a, V> where V: Clone {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
 }
 
-impl<'e> CFG<'e> {
+impl<'a, V> AsEntityGraph<'a, V, BranchKind> for CFG<'a, V>
+where V: Clone {
+    fn entity_graph(&self) -> &EntityGraph<'a, V, BranchKind> {
+        &self.graph
+    }
+}
+
+impl<'a, V> AsEntityGraphMut<'a, V, BranchKind> for CFG<'a, V>
+where V: Clone {
+    fn entity_graph_mut(&mut self) -> &mut EntityGraph<'a, V, BranchKind> {
+        &mut self.graph
+    }
+}
+
+impl<'a, V> CFG<'a, V>
+where V: Clone {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn cloned<'a>(&self) -> CFG<'a> {
+    pub fn cloned<'b>(&self) -> CFG<'b, V> {
         CFG {
-            graph: self.graph.clone(),
-            entry_points: self.entry_points.clone(),
-            entity_mapping: self.entity_mapping.clone(),
-            blocks: self.blocks.iter()
-                .map(|(id, blk)| (id.clone(), Cow::Owned(blk.as_ref().clone())))
-                .collect(),
+            graph: self.graph.cloned()
         }
     }
 
-    pub fn node_count(&self) -> usize {
-        self.graph.node_count()
-    }
-
-    pub fn edge_count(&self) -> usize {
-        self.graph.edge_count()
-    }
-
     /// Corresponds to the first entry point added
-    pub fn default_entry(&self) -> Option<NodeIndex> {
-        self.entry_points.iter().next().map(|(_, idx)| *idx)
+    pub fn default_entry(&self) -> Option<VertexIndex<V>> {
+        self.graph.root_entities().next().map(|(_, vx, _)| vx)
     }
 
+    /*
     pub fn block_node(&self, block: &EntityId) -> Option<NodeIndex> {
         self.entity_mapping.get(block).copied()
     }
@@ -210,55 +165,36 @@ impl<'e> CFG<'e> {
             idx
         }
     }
+    */
 
-    pub fn add_call<B, F>(&mut self, blk: B, fcn: F)
-    where B: IntoEntityRef<'e, T=Block>,
-          F: IntoEntityRef<'e, T=Block> {
-        let blk = blk.into_entity_ref();
-        let fcn = fcn.into_entity_ref();
+    pub fn add_call<S, T>(&mut self, s: S, t: T)
+    where S: IntoEntityRef<'a, T=V>,
+          T: IntoEntityRef<'a, T=V> {
 
-        let blk_end = self.entity_mapping[blk.id()];
-        let fcn_start = self.entity_mapping[fcn.id()];
-
-        self.graph.add_edge(blk_end, fcn_start, BranchKind::Call);
+        self.graph.add_relation(s, t, BranchKind::Call);
     }
 
-    pub fn add_cond<B, T>(&mut self, blk: B, tgt: T)
-    where B: IntoEntityRef<'e, T=Block>,
-          T: IntoEntityRef<'e, T=Block> {
-        let blk = blk.into_entity_ref();
-        let tgt = tgt.into_entity_ref();
+    pub fn add_unresolved<S, T>(&mut self, s: S, t: T)
+    where S: IntoEntityRef<'a, T=V>,
+          T: IntoEntityRef<'a, T=V> {
 
-        let blk_end = self.entity_mapping[blk.id()];
-        let blk_start = self.entity_mapping[tgt.id()];
-
-        let fall_start = self.entity_mapping[blk.value().next_blocks().next().unwrap()];
-
-        self.graph.add_edge(blk_end, blk_start, BranchKind::Jump);
-        self.graph.add_edge(blk_end, fall_start, BranchKind::Fall);
+        self.graph.add_relation(s, t, BranchKind::Unresolved);
     }
 
-    pub fn add_jump<B, T>(&mut self, blk: B, tgt: T)
-    where B: IntoEntityRef<'e, T=Block>,
-          T: IntoEntityRef<'e, T=Block> {
-        let blk = blk.into_entity_ref();
-        let tgt = tgt.into_entity_ref();
+    pub fn add_cond<S, T, F>(&mut self, s: S, t: T, f: F)
+    where S: IntoEntityRef<'a, T=V>,
+          T: IntoEntityRef<'a, T=V>,
+          F: IntoEntityRef<'a, T=V> {
+        let s = s.into_entity_ref();
+        //let fall_start = self.entity_mapping[blk.value().next_blocks().next().unwrap()];
 
-        let blk_end = self.entity_mapping[blk.id()];
-        let blk_start = self.entity_mapping[tgt.id()];
-
-        self.graph.add_edge(blk_end, blk_start, BranchKind::Jump);
+        self.graph.add_relation(s.clone(), t, BranchKind::Jump);
+        self.graph.add_relation(s, f, BranchKind::Fall);
     }
 
-    pub fn dominance_tree(&self) -> DominanceTree {
-        self.graph.dominance_tree()
-    }
-
-    pub fn dominance_frontier(&self) -> DominanceFrontier {
-        self.graph.dominance_frontier()
-    }
-
-    pub fn dominance(&self) -> Dominance {
-        self.graph.dominance()
+    pub fn add_jump<S, T>(&mut self, s: S, t: T)
+    where S: IntoEntityRef<'a, T=V>,
+          T: IntoEntityRef<'a, T=V> {
+        self.graph.add_relation(s, t, BranchKind::Jump);
     }
 }

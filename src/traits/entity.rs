@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use fugue::ir::il::ecode::Entity;
 
-pub type EntityRef<'a, T> = Cow<'a, Entity<T>>;
+use crate::types::EntityRef;
 
 pub trait IntoEntityRef<'a>: Clone {
     type T: Clone;
@@ -30,5 +30,13 @@ impl<'a, T> IntoEntityRef<'a> for Cow<'a, Entity<T>> where T: Clone {
 
     fn into_entity_ref(self) -> EntityRef<'a, T> {
         self
+    }
+}
+
+impl<'a, T> IntoEntityRef<'a> for &'_ Cow<'a, Entity<T>> where T: Clone {
+    type T = T;
+
+    fn into_entity_ref(self) -> EntityRef<'a, T> {
+        self.clone()
     }
 }

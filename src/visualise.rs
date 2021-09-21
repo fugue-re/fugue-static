@@ -6,9 +6,9 @@ use std::marker::PhantomData;
 
 use fugue::ir::il::ecode::EntityId;
 
+use crate::graphs::entity::{AsEntityGraph, EntityGraph};
 use crate::models::block::Block;
 use crate::models::cfg::{BranchKind, CFG};
-use crate::types::EntityGraph;
 
 // NOTE: this is a hack to get petgraph to render blocks nicely
 struct DisplayAlways<T: Display>(T);
@@ -26,37 +26,37 @@ impl<T> Display for DisplayAlways<T> where T: Display {
 }
 
 pub struct DotDisplay<'a, T>(&'a T);
-pub struct DotDisplayWith<'a, N, NR: 'a, E, ER: 'a, F, G, T>{
+pub struct DotDisplayWith<'a, V, VR: 'a, E, ER: 'a, F, G, T>{
     g: &'a T,
     nf: RefCell<F>,
     ef: RefCell<G>,
-    marker: PhantomData<(N, NR, E, ER)>,
+    marker: PhantomData<(V, VR, E, ER)>,
 }
 
 pub trait AsDot<'a>: Sized {
-    type N: 'a;
+    type V: 'a;
     type E: 'a;
 
     fn dot(&'a self) -> DotDisplay<'a, Self>;
-    fn dot_with<NR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::N, NR, Self::E, ER, F, G, Self>
-        where F: FnMut(&'a Self::N) -> NR,
+    fn dot_with<VR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::V, VR, Self::E, ER, F, G, Self>
+        where F: FnMut(&'a EntityId, &'a Self::V) -> VR,
               G: FnMut(&'a Self::E) -> ER,
-              NR: Display + 'a,
+              VR: Display + 'a,
               ER: Display + 'a;
 }
 
-impl<'a, 'e> AsDot<'a> for CFG<'e> {
-    type N = Block;
+impl<'a, 'e> AsDot<'a> for CFG<'e, Block> {
+    type V = Block;
     type E = BranchKind;
 
     fn dot(&'a self) -> DotDisplay<'a, Self> {
         DotDisplay(self)
     }
 
-    fn dot_with<NR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::N, NR, Self::E, ER, F, G, Self>
-        where F: FnMut(&'a Self::N) -> NR,
+    fn dot_with<VR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::V, VR, Self::E, ER, F, G, Self>
+        where F: FnMut(&'a EntityId, &'a Self::V) -> VR,
               G: FnMut(&'a Self::E) -> ER,
-              NR: Display + 'a,
+              VR: Display + 'a,
               ER: Display + 'a {
         DotDisplayWith {
             g: self,
@@ -67,11 +67,13 @@ impl<'a, 'e> AsDot<'a> for CFG<'e> {
     }
 }
 
-impl<'a, 'e> Display for DotDisplay<'a, CFG<'e>> {
+impl<'a, 'e> Display for DotDisplay<'a, CFG<'e, Block>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let g_str = self.0
-            .map(|_nx, n| {
-                let block = &self.0.blocks()[n];
+            .entity_graph()
+            .as_ref()
+            .map(|nx, _n| {
+                let block = self.0.entity(nx.into());
                 DisplayAlways(format!("{}", block.value()))
             },
             |_ex, e| e);
@@ -86,17 +88,19 @@ impl<'a, 'e> Display for DotDisplay<'a, CFG<'e>> {
     }
 }
 
-impl<'a, 'e, NR, ER, F, G> Display for DotDisplayWith<'a, Block, NR, BranchKind, ER, F, G, CFG<'e>>
-where F: FnMut(&'a Block) -> NR,
+impl<'a, 'e, VR, ER, F, G> Display for DotDisplayWith<'a, Block, VR, BranchKind, ER, F, G, CFG<'e, Block>>
+where F: FnMut(&'a EntityId, &'a Block) -> VR,
       G: FnMut(&'a BranchKind) -> ER,
-      NR: Display + 'a,
+      VR: Display + 'a,
       ER: Display + 'a {
 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let g_str = self.g
-            .map(|_nx, n| {
-                let block = &self.g.blocks()[n];
-                DisplayAlways(format!("{}", (self.nf.borrow_mut())(block.value())))
+            .entity_graph()
+            .as_ref()
+            .map(|nx, _n| {
+                let block = &self.g.entity(nx.into());
+                DisplayAlways(format!("{}", (self.nf.borrow_mut())(block.id(), block.value())))
             },
             |_ex, e| {
                 DisplayAlways(format!("{}", (self.ef.borrow_mut())(e)))
@@ -112,18 +116,20 @@ where F: FnMut(&'a Block) -> NR,
     }
 }
 
-impl<'a, E: 'a> AsDot<'a> for EntityGraph<E> {
-    type N = EntityId;
+impl<'a, V, E> AsDot<'a> for EntityGraph<'a, V, E>
+where V: Clone + 'a,
+      E: 'a {
+    type V = V;
     type E = E;
 
     fn dot(&'a self) -> DotDisplay<'a, Self> {
         DotDisplay(self)
     }
 
-    fn dot_with<NR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::N, NR, Self::E, ER, F, G, Self>
-        where F: FnMut(&'a EntityId) -> NR,
+    fn dot_with<VR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::V, VR, Self::E, ER, F, G, Self>
+        where F: FnMut(&'a EntityId, &'a V) -> VR,
               G: FnMut(&'a E) -> ER,
-              NR: Display + 'a,
+              VR: Display + 'a,
               ER: Display + 'a {
         DotDisplayWith {
             g: self,
@@ -134,11 +140,17 @@ impl<'a, E: 'a> AsDot<'a> for EntityGraph<E> {
     }
 }
 
-impl<'a, E: Display> Display for DotDisplay<'a, EntityGraph<E>> {
+impl<'a, V, E> Display for DotDisplay<'a, EntityGraph<'a, V, E>>
+where V: Clone + Display + 'a,
+      E: Display + 'a {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let g_str = self.0
+            .as_ref()
             .map(
-                |_nx, n| DisplayAlways(format!("{}", n)),
+                |nx, _n| {
+                    let v = self.0.entity(nx.into());
+                    DisplayAlways(format!("{}", v.value()))
+                },
                 |_ex, e| DisplayAlways(format!("{}", e))
             );
 
@@ -152,17 +164,22 @@ impl<'a, E: Display> Display for DotDisplay<'a, EntityGraph<E>> {
     }
 }
 
-impl<'a, NR, E, ER, F, G> Display for DotDisplayWith<'a, EntityId, NR, E, ER, F, G, EntityGraph<E>>
-where F: FnMut(&'a EntityId) -> NR,
+impl<'a, V, VR, E, ER, F, G> Display for DotDisplayWith<'a, V, VR, E, ER, F, G, EntityGraph<'a, V, E>>
+where F: FnMut(&'a EntityId, &'a V) -> VR,
       G: FnMut(&'a E) -> ER,
-      NR: Display + 'a,
+      VR: Display + 'a,
       ER: Display + 'a,
+      V: Clone + 'a,
       E: 'a {
 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let g_str = self.g
+            .as_ref()
             .map(
-                |_nx, n| DisplayAlways(format!("{}", (self.nf.borrow_mut())(n))),
+                |nx, _n| {
+                    let v = self.g.entity(nx.into());
+                    DisplayAlways(format!("{}", (self.nf.borrow_mut())(v.id(), v.value())))
+                },
                 |_ex, e| DisplayAlways(format!("{}", (self.ef.borrow_mut())(e))),
             );
 

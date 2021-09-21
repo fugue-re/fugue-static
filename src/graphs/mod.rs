@@ -1,3 +1,5 @@
 pub mod algorithms;
 pub mod entity;
-pub mod traversals;
+
+pub use entity::{AsEntityGraph, AsEntityGraphMut, EntityGraph, EntityRefIter, EntityRootIter};
+mod traversals;

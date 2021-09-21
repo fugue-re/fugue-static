@@ -1,15 +1,11 @@
 use fixedbitset::FixedBitSet;
 
-use petgraph::graph::NodeIndex;
-
 use petgraph::algo::kosaraju_scc;
 use petgraph::graph::IndexType;
-use petgraph::visit::{IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, GraphRef, NodeCount, Reversed, VisitMap, Visitable};
-
-use std::collections::VecDeque;
-
-use crate::graphs::traversals::{PostOrder, Traversal};
-use crate::types::AsEntityGraph;
+use petgraph::visit::{
+    GraphRef, IntoNeighbors, IntoNeighborsDirected, IntoNodeIdentifiers, NodeCount, Reversed,
+    VisitMap, Visitable,
+};
 
 /// Visit nodes in a depth-first-search (DFS) emitting nodes in reverse postorder
 /// (each node after all its descendants have been emitted).
@@ -55,7 +51,11 @@ where
     /// `start` in the stack of nodes to visit.
     pub fn new<G>(graph: G) -> Self
     where
-        G: GraphRef + IntoNeighborsDirected + IntoNodeIdentifiers + NodeCount + Visitable<NodeId = N, Map = FixedBitSet>,
+        G: GraphRef
+            + IntoNeighborsDirected
+            + IntoNodeIdentifiers
+            + NodeCount
+            + Visitable<NodeId = N, Map = FixedBitSet>,
     {
         let (start, mut dfs) = Self::empty(graph);
         dfs.move_to(start);
@@ -64,10 +64,14 @@ where
 
     fn empty<G>(graph: G) -> (Option<N>, Self)
     where
-        G: GraphRef + IntoNeighborsDirected + IntoNodeIdentifiers + Visitable<NodeId = N, Map = FixedBitSet>,
+        G: GraphRef
+            + IntoNeighborsDirected
+            + IntoNodeIdentifiers
+            + Visitable<NodeId = N, Map = FixedBitSet>,
     {
         let mut scc = kosaraju_scc(&graph);
-        let end_neighbours = graph.node_identifiers()
+        let end_neighbours = graph
+            .node_identifiers()
             .filter(|nx| graph.neighbors(*nx).next().is_none())
             .collect::<Vec<_>>();
 
@@ -137,28 +141,13 @@ where
                     if !self.discovered.is_visited(&cs[0]) {
                         self.end_neighbours.push(cs[0]);
                         self.stack.push(Some(cs[0]));
-                        continue 'outer
+                        continue 'outer;
                     }
                 }
             }
 
-            break
+            break;
         }
         None
-    }
-}
-
-impl<'a> Traversal<'a> for RevPostOrder<NodeIndex> {
-    fn into_queue_with_roots<G>(graph: G) -> (Vec<NodeIndex>, VecDeque<NodeIndex>)
-    where G: AsEntityGraph + 'a {
-        let g = graph;
-        let mut traversal = PostOrder::new(g);
-        let mut queue = VecDeque::new();
-
-        while let Some(nx) = traversal.next(g) {
-            queue.push_front(nx);
-        }
-
-        (traversal.start_neighbours, queue)
     }
 }

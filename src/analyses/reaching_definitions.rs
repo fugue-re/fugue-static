@@ -2,6 +2,7 @@ use crate::analyses::fixed_point::FixedPointForward;
 use crate::models::block::Block;
 use crate::traits::*;
 use crate::transforms::ssa::simple_var::SimpleVar;
+use crate::graphs::entity::AsEntityGraph;
 
 use fugue::ir::il::ecode::EntityId;
 
@@ -14,7 +15,9 @@ pub type DefinitionMap<'ecode> = BTreeMap<SimpleVar<'ecode>, BTreeSet<Cow<'ecode
 #[derive(Default)]
 pub struct ReachingDefinitions;
 
-impl<'ecode> FixedPointForward<'ecode, DefinitionMap<'ecode>> for ReachingDefinitions {
+impl<'ecode, E, G> FixedPointForward<'ecode, Block, E, G, DefinitionMap<'ecode>> for ReachingDefinitions
+where E: 'ecode,
+      G: AsEntityGraph<'ecode, Block, E> {
     type Err = Infallible;
 
     fn join(&mut self, mut current: DefinitionMap<'ecode>, prev: &DefinitionMap<'ecode>) -> Result<DefinitionMap<'ecode>, Self::Err> {

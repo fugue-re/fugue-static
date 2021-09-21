@@ -2,6 +2,7 @@ use crate::analyses::fixed_point::FixedPointBackward;
 use crate::models::block::Block;
 use crate::traits::collect::ValueRefCollector;
 use crate::traits::*;
+use crate::graphs::entity::AsEntityGraph;
 
 use fugue::ir::il::ecode::Var;
 
@@ -48,7 +49,9 @@ impl<'ecode> ValueRefCollector<'ecode, Var> for OnlyLocals<'ecode> {
 #[derive(Default)]
 pub struct LocalsLiveness;
 
-impl<'ecode> FixedPointBackward<'ecode, BTreeSet<&'ecode Var>> for LocalsLiveness {
+impl<'ecode, E, G> FixedPointBackward<'ecode, Block, E, G, BTreeSet<&'ecode Var>> for LocalsLiveness
+where E: 'ecode,
+      G: AsEntityGraph<'ecode, Block, E> {
     type Err = Infallible;
 
     fn join(&mut self, mut current: BTreeSet<&'ecode Var>, next: &BTreeSet<&'ecode Var>) -> Result<BTreeSet<&'ecode Var>, Self::Err> {

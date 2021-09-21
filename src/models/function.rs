@@ -50,16 +50,16 @@ impl Function {
         &mut self.callers
     }
 
-    pub fn cfg<'db>(&self, program: &'db Program) -> CFG<'db> {
+    pub fn cfg<'db>(&self, program: &'db Program) -> CFG<'db, Block> {
         let mut cfg = CFG::new();
 
         let blks = program.blocks();
         for blkid in self.blocks.iter() {
             let blk = &blks[blkid];
             if blk.location() == self.location() {
-                cfg.add_entry(blk);
+                cfg.add_root_entity(blk);
             } else {
-                cfg.add_block(blk);
+                cfg.add_entity(blk);
             }
         }
 
@@ -70,7 +70,9 @@ impl Function {
                     let tgt_id = EntityId::new("blk", location.clone());
                     if self.blocks.contains(&tgt_id) {
                         let tgt = &blks[&tgt_id];
-                        cfg.add_cond(blk, tgt);
+                        let fall_id = blk.value().next_blocks().next().unwrap();
+                        let fall = &blks[&fall_id];
+                        cfg.add_cond(blk, tgt, fall);
                     }
                 }
                 Stmt::Branch(BranchTarget::Location(location)) => {
@@ -83,21 +85,22 @@ impl Function {
                 _ => (),
             }
 
-            let blkx = cfg.block_node(blkid).unwrap();
+            let blkx = cfg.entity_vertex(blkid).unwrap();
             for tgt in blk.next_blocks() {
-                if let Some(nx) = cfg.block_node(tgt) {
-                    if !cfg.contains_edge(blkx, nx)
+                if let Some(vx) = cfg.entity_vertex(tgt) {
+                    if !cfg.contains_edge(blkx, vx)
                         && !blk
                             .operations()
                             .last()
                             .map(|op| op.is_return())
                             .unwrap_or(false)
                     {
-                        cfg.add_edge(blkx, nx, BranchKind::Fall);
+                        cfg.add_vertex_relation(blkx, vx, BranchKind::Fall);
                     }
                 }
             }
         }
+
         cfg
     }
 }

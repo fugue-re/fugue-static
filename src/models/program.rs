@@ -133,15 +133,15 @@ impl<'db> Program<'db> {
         cg
     }
 
-    pub fn icfg(&self) -> CFG {
+    pub fn icfg(&self) -> CFG<Block> {
         let mut icfg = CFG::new();
 
         // add all blocks
         for blk in self.blocks.values() {
             if self.functions_by_location.contains_key(blk.location()) {
-                icfg.add_entry(blk);
+                icfg.add_root_entity(blk);
             } else {
-                icfg.add_block(blk);
+                icfg.add_entity(blk);
             }
         }
 
@@ -156,7 +156,11 @@ impl<'db> Program<'db> {
                 Stmt::CBranch(_, BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());
                     let tgt = &self.blocks[&tgt_id];
-                    icfg.add_cond(blk, tgt);
+
+                    let fall_id = blk.next_blocks().next().unwrap();
+                    let fall = &self.blocks[&fall_id];
+
+                    icfg.add_cond(blk, tgt, fall);
                 }
                 Stmt::Branch(BranchTarget::Location(location)) => {
                     let tgt_id = EntityId::new("blk", location.clone());

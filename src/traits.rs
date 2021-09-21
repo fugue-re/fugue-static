@@ -1,9 +1,6 @@
 pub mod collect;
 pub use collect::{ValueRefCollector, ValueMutCollector};
 
-pub mod dominance;
-pub use dominance::*;
-
 pub mod interval;
 pub use interval::AsInterval;
 
@@ -11,7 +8,7 @@ pub mod stmt;
 pub use stmt::StmtExt;
 
 pub mod entity;
-pub use entity::{EntityRef, IntoEntityRef};
+pub use entity::IntoEntityRef;
 
 pub mod variables;
 pub use variables::Variables;

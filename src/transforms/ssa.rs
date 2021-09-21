@@ -2,13 +2,12 @@ use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 
 use petgraph::EdgeDirection;
-use petgraph::graph::NodeIndex;
-
 use fugue::ir::il::ecode::Var;
 
-use crate::models::CFG;
+use crate::graphs::algorithms::dominance::{Dominance, DominanceTree};
+use crate::graphs::entity::{AsEntityGraphMut, VertexIndex};
+use crate::models::Block;
 use crate::traits::Variables;
-use crate::traits::dominance::{Dominance, DominanceTree};
 
 pub mod simple_var;
 use simple_var::SimpleVar;
@@ -55,8 +54,11 @@ impl<'a> SSAScopeStack<'a> {
     }
 }
 
-fn transform<'ecode>(g: &mut CFG<'ecode>) {
-    let Dominance { tree: dt, frontier: df } = g.dominance();
+fn transform<'ecode, E, G>(g: &mut G)
+where G: AsEntityGraphMut<'ecode, Block, E> {
+    let dominance = g.entity_graph().dominators();
+    let dt = dominance.dominance_tree();
+    let df = dominance.dominance_frontier();
 
     let mut defined = HashMap::new(); // SimpleVar -> Set<BlockIds>
     let mut free = HashSet::new(); // Set<SimpleVar> (non-local definitions)
@@ -67,16 +69,14 @@ fn transform<'ecode>(g: &mut CFG<'ecode>) {
     let mut uses_tmp = HashSet::new();
 
     // def. use information for each block and g
-    for (eid, blk) in g.blocks.iter() {
+    for (_eid, vx, blk) in g.entity_graph().entities() {
         blk.value().defined_and_used_variables_with(&mut defs_tmp, &mut uses_tmp);
         free.extend(uses_tmp.drain().map(SimpleVar::from));
-
-        let nx = g.entity_mapping[eid];
 
         for def in defs_tmp.drain().map(SimpleVar::owned) {
             defined.entry(def)
                 .or_insert_with(HashSet::new)
-                .insert(nx);
+                .insert(vx);
         }
     }
 
@@ -94,9 +94,10 @@ fn transform<'ecode>(g: &mut CFG<'ecode>) {
                         continue
                     }
 
-                    let preds = g.neighbors_directed(*df_node, EdgeDirection::Incoming)
+                    let preds = g.entity_graph().predecessors(*df_node)
                         .into_iter()
-                        .collect::<HashSet<NodeIndex>>();
+                        .map(|(vx, _)| vx)
+                        .collect::<HashSet<_>>();
 
                     phi_locs.entry(*df_node)
                         .or_insert_with(HashMap::new)
@@ -121,11 +122,9 @@ fn transform<'ecode>(g: &mut CFG<'ecode>) {
     );
 
     // populate phi assignments for each block
-    for (nx, mut phim) in phi_locs.into_iter() {
-        let eid = g[nx].clone();
-        let block = g.blocks.get_mut(&eid).unwrap();
-
-        for (var, phin) in block.to_mut().value_mut().phis_mut() {
+    for (vx, mut phim) in phi_locs.into_iter() {
+        let blk = g.entity_graph_mut().entity_mut(vx);
+        for (var, phin) in blk.to_mut().value_mut().phis_mut() {
             let (_, mut ns) = phim.remove(&SimpleVar::from(var)).unwrap();
             ns.dedup(); // TODO: back to set?
             *phin = ns;
@@ -133,20 +132,19 @@ fn transform<'ecode>(g: &mut CFG<'ecode>) {
     }
 }
 
-fn transform_rename<'a>(
-    phi_locs: &mut HashMap<NodeIndex, HashMap<SimpleVar<'a>, (HashSet<NodeIndex>, Vec<Var>)>>,
-    dt: &DominanceTree,
-    g: &mut CFG,
-) {
-    let mut pre_order = dt.visit_pre_order();
+fn transform_rename<'a, E, G>(
+    phi_locs: &mut HashMap<VertexIndex<Block>, HashMap<SimpleVar<'a>, (HashSet<VertexIndex<Block>>, Vec<Var>)>>,
+    dt: &DominanceTree<Block>,
+    g: &mut G,
+) where G: AsEntityGraphMut<'a, Block, E> {
+    let mut pre_order = dt.pre_order();
     let (mut gmapping, mut ssa_stack) = SSAScopeStack::new();
 
     while let Some(dt_node) = pre_order.next() {
         let mut renamer = ssa_stack.pop();
 
-        let node = dt[dt_node];
-        let eid = g[node].clone();
-        let block = g.blocks.get_mut(&eid).unwrap().to_mut();
+        let node = dt[*dt_node];
+        let block = g.entity_graph_mut().entity_mut(node).to_mut();
 
         if let Some(phi) = phi_locs.get(&node) {
             for (var, _) in phi.iter() {
@@ -170,11 +168,11 @@ fn transform_rename<'a>(
             }
         }
 
-        let mut walker = g.entity_graph()
-            .neighbors_directed(node, EdgeDirection::Outgoing)
+        let mut walker = g.entity_graph_mut()
+            .successors(node)
             .detach();
 
-        while let Some((_, succ)) = walker.next(g.entity_graph()) {
+        while let Some((succ, _)) = walker.next(g.entity_graph()) {
             if let Some(phi) = phi_locs.get_mut(&succ) {
                 for (var, (_, ns)) in phi.iter_mut().filter(|(_, (preds, _))| preds.contains(&node)) {
                     let generation = renamer.current(var).unwrap_or(0);
@@ -183,17 +181,17 @@ fn transform_rename<'a>(
             }
         }
 
-        for _succ in dt.neighbors_directed(dt_node, EdgeDirection::Outgoing) {
+        for _succ in dt.neighbors_directed(*dt_node, EdgeDirection::Outgoing) {
             ssa_stack.push(&renamer);
         }
     }
 }
 
-pub trait SSATransform {
+pub trait SSATransform<E> {
     fn ssa(&mut self);
 }
 
-impl<'ecode> SSATransform for CFG<'ecode> {
+impl<'ecode, E, G> SSATransform<E> for G where G: AsEntityGraphMut<'ecode, Block, E> {
     #[inline(always)]
     fn ssa(&mut self) {
         transform(self)

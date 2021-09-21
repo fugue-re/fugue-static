@@ -1,8 +1,7 @@
-use petgraph::EdgeDirection;
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 
-use crate::models::{Block, CFG};
-use crate::graphs::traversals::{PostOrder, RevPostOrder, Traversal};
+use crate::graphs::entity::AsEntityGraph;
 use crate::traits::collect::EntityValueCollector;
 
 use fugue::ir::il::ecode::EntityId;
@@ -19,31 +18,35 @@ pub enum AnalysisError<E: std::error::Error> {
     LostInformation(EntityId),
 }
 
-pub trait FixedPointBackward<'a, O>
-where O: Clone + Default + PartialOrd {
+pub trait FixedPointBackward<'a, V, E, G, O>
+where V: 'a + Clone,
+      E: 'a,
+      G: AsEntityGraph<'a, V, E>,
+      O: Clone + Default + PartialOrd {
     type Err: std::error::Error;
 
     fn join(&mut self, current: O, next: &O) -> Result<O, Self::Err>;
-    fn transfer(&mut self, block: &'a Block, current: Option<O>) -> Result<O, Self::Err>;
+    fn transfer(&mut self, entity: &'a V, current: Option<O>) -> Result<O, Self::Err>;
 
     #[inline(always)]
-    fn analyse<C>(&mut self, graph: &'a CFG) -> Result<C, AnalysisError<Self::Err>>
+    fn analyse<C>(&mut self, g: &'a G) -> Result<C, AnalysisError<Self::Err>>
     where C: EntityValueCollector<O> {
-        self.analyse_with(graph, false)
+        self.analyse_with(g, false)
     }
 
-    fn analyse_with<C>(&mut self, graph: &'a CFG, always_merge: bool) -> Result<C, AnalysisError<Self::Err>>
+    fn analyse_with<C>(&mut self, g: &'a G, always_merge: bool) -> Result<C, AnalysisError<Self::Err>>
     where C: EntityValueCollector<O> {
         let mut results = C::default();
-        let mut queue = PostOrder::into_queue(&**graph);
+
+        let graph = g.entity_graph();
+        let mut queue = graph.post_order().map(|(_, v, _)| v).collect::<VecDeque<_>>();
 
         while let Some(node) = queue.pop_front() {
             let current_in = graph
-                .entity_graph()
-                .neighbors_directed(node, EdgeDirection::Outgoing)
-                .try_fold(None, |acc, succ_nx| {
-                    let succ = &graph[succ_nx];
-                    if let Some(next) = results.get(succ) {
+                .successors(node)
+                .try_fold(None, |acc, (succ_nx, _)| {
+                    let succ = graph.entity(succ_nx);
+                    if let Some(next) = results.get(succ.id()) {
                         if let Some(acc) = acc {
                             self.join(acc, next).map(Option::from)
                         } else {
@@ -54,9 +57,9 @@ where O: Clone + Default + PartialOrd {
                     }
                 })?;
 
-            let eid = &graph[node];
-            let block = graph.block_at(node);
-            let mut current = self.transfer(block.value(), current_in)?;
+            let entity = graph.entity(node);
+            let eid = entity.id();
+            let mut current = self.transfer(entity.value(), current_in)?;
 
             if let Some(old_current) = results.get(eid) {
                 match current.partial_cmp(old_current) {
@@ -66,11 +69,9 @@ where O: Clone + Default + PartialOrd {
                         current = self.join(current, old_current)?;
                     },
                     Some(Ordering::Less) => {
-                        let eid = graph.entity_graph().node_weight(node).unwrap();
                         return Err(AnalysisError::CannotOrder(eid.clone()))
                     },
                     None => {
-                        let eid = graph.entity_graph().node_weight(node).unwrap();
                         return Err(AnalysisError::CannotOrder(eid.clone()))
                     },
 
@@ -79,7 +80,7 @@ where O: Clone + Default + PartialOrd {
 
             results.insert(eid.clone(), current);
 
-            for pred in graph.entity_graph().neighbors_directed(node, EdgeDirection::Incoming) {
+            for (pred, _) in graph.predecessors(node) {
                 if !queue.contains(&pred) {
                     queue.push_back(pred);
                 }
@@ -90,31 +91,35 @@ where O: Clone + Default + PartialOrd {
     }
 }
 
-pub trait FixedPointForward<'a, O>
-where O: Clone + Default + PartialOrd {
+pub trait FixedPointForward<'a, V, E, G, O>
+where V: 'a + Clone,
+      E: 'a,
+      G: AsEntityGraph<'a, V, E>,
+      O: Clone + Default + PartialOrd {
     type Err: std::error::Error;
 
     fn join(&mut self, current: O, next: &O) -> Result<O, Self::Err>;
-    fn transfer(&mut self, block: &'a Block, current: Option<O>) -> Result<O, Self::Err>;
+    fn transfer(&mut self, entity: &'a V, current: Option<O>) -> Result<O, Self::Err>;
 
     #[inline(always)]
-    fn analyse<C>(&mut self, graph: &'a CFG) -> Result<C, AnalysisError<Self::Err>>
+    fn analyse<C>(&mut self, g: &'a G) -> Result<C, AnalysisError<Self::Err>>
     where C: EntityValueCollector<O> {
-        self.analyse_with(graph, false)
+        self.analyse_with(g, false)
     }
 
-    fn analyse_with<C>(&mut self, graph: &'a CFG, always_merge: bool) -> Result<C, AnalysisError<Self::Err>>
+    fn analyse_with<C>(&mut self, g: &'a G, always_merge: bool) -> Result<C, AnalysisError<Self::Err>>
     where C: EntityValueCollector<O> {
         let mut results = C::default();
-        let mut queue = RevPostOrder::into_queue(&**graph);
+
+        let graph = g.entity_graph();
+        let mut queue = graph.reverse_post_order().map(|(_, v, _)| v).collect::<VecDeque<_>>();
 
         while let Some(node) = queue.pop_front() {
             let current_in = graph
-                .entity_graph()
-                .neighbors_directed(node, EdgeDirection::Incoming)
-                .try_fold(None, |acc, pred_nx| {
-                    let pred = &graph[pred_nx];
-                    if let Some(next) = results.get(pred) {
+                .predecessors(node)
+                .try_fold(None, |acc, (pred_nx, _)| {
+                    let pred = graph.entity(pred_nx);
+                    if let Some(next) = results.get(pred.id()) {
                         if let Some(acc) = acc {
                             self.join(acc, next).map(Option::from)
                         } else {
@@ -125,10 +130,9 @@ where O: Clone + Default + PartialOrd {
                     }
                 })?;
 
-            let eid = &graph[node];
-            let block = graph.block_at(node);
-
-            let mut current = self.transfer(block.value(), current_in)?;
+            let entity = graph.entity(node);
+            let eid = entity.id();
+            let mut current = self.transfer(entity.value(), current_in)?;
 
             if let Some(old_current) = results.get(eid) {
                 match current.partial_cmp(old_current) {
@@ -138,11 +142,9 @@ where O: Clone + Default + PartialOrd {
                         current = self.join(current, old_current)?;
                     },
                     Some(Ordering::Less) => {
-                        let eid = graph.entity_graph().node_weight(node).unwrap();
                         return Err(AnalysisError::CannotOrder(eid.clone()))
                     },
                     None => {
-                        let eid = graph.entity_graph().node_weight(node).unwrap();
                         return Err(AnalysisError::CannotOrder(eid.clone()))
                     },
 
@@ -151,7 +153,7 @@ where O: Clone + Default + PartialOrd {
 
             results.insert(eid.clone(), current);
 
-            for succ in graph.entity_graph().neighbors_directed(node, EdgeDirection::Outgoing) {
+            for (succ, _) in graph.successors(node) {
                 if !queue.contains(&succ) {
                     queue.push_back(succ);
                 }

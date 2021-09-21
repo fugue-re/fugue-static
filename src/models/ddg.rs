@@ -8,15 +8,11 @@
 
 // https://llvm.org/docs/DependenceGraphs/index.html#id6
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use petgraph::graph::NodeIndex;
 use fugue::ir::il::ecode::{EntityId, Var};
 
-use crate::models::CFG;
-use crate::graphs::traversals::{RevPostOrder, Traversal};
-use crate::traits::Variables;
-use crate::types::EntityGraph;
+use crate::graphs::entity::{AsEntityGraph, AsEntityGraphMut, EntityGraph};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DependenceKind {
@@ -36,15 +32,29 @@ pub struct Dependence {
 pub struct PIBlock(HashSet<EntityId>); // SSC blocks -> do we need them?
 
 #[derive(Clone)]
-pub struct DDG {
-    graph: EntityGraph<DependenceKind>,
-    entity_mapping: HashMap<EntityId, NodeIndex>,
+pub struct DDG<'a, V> where V: Clone {
+    graph: EntityGraph<'a, V, DependenceKind>,
     pi_blocks: Vec<PIBlock>,
 }
 
-impl DDG {
-    // NOTE: assumes that cfg is in SSA form
-    pub fn new(_cfg: &CFG) -> Self {
+impl<'a, V> AsEntityGraph<'a, V, DependenceKind> for DDG<'a, V>
+where V: Clone {
+    fn entity_graph(&self) -> &EntityGraph<'a, V, DependenceKind> {
+        &self.graph
+    }
+}
+
+impl<'a, V> AsEntityGraphMut<'a, V, DependenceKind> for DDG<'a, V>
+where V: Clone {
+    fn entity_graph_mut(&mut self) -> &mut EntityGraph<'a, V, DependenceKind> {
+        &mut self.graph
+    }
+}
+
+impl<'a, V> DDG<'a, V>
+where V: Clone {
+    pub fn new<E, G>(_cfg: G) -> Self
+    where G: AsEntityGraph<'a, V, E> {
         todo!()
 
         /*

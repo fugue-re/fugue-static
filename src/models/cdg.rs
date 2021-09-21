@@ -1,111 +1,66 @@
-use std::borrow::{Borrow, BorrowMut};
-use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
-use petgraph::stable_graph::NodeIndex;
-use petgraph::visit::{EdgeRef, IntoEdgeReferences};
-
-use fugue::ir::il::ecode::EntityId;
-
-use crate::models::CFG;
-use crate::models::cfg::BranchKind;
-
-use crate::traits::dominance::*;
-use crate::types::EntityGraph;
+use crate::graphs::algorithms::dominance::Dominance;
+use crate::graphs::entity::{AsEntityGraph, AsEntityGraphMut, EntityGraph};
 
 #[derive(Clone, Default)]
-pub struct CDG {
-    pub(crate) graph: EntityGraph<BranchKind>,
-    pub(crate) entity_mapping: HashMap<EntityId, NodeIndex>,
+#[repr(transparent)]
+pub struct CDG<'a, V, E> where V: Clone {
+    pub(crate) graph: EntityGraph<'a, V, E>,
 }
 
-impl Borrow<EntityGraph<BranchKind>> for CDG {
-    fn borrow(&self) -> &EntityGraph<BranchKind> {
-        &self.graph
-    }
-}
-
-impl Borrow<EntityGraph<BranchKind>> for &'_ CDG {
-    fn borrow(&self) -> &EntityGraph<BranchKind> {
-        &self.graph
-    }
-}
-
-impl Borrow<EntityGraph<BranchKind>> for &'_ mut CDG {
-    fn borrow(&self) -> &EntityGraph<BranchKind> {
-        &self.graph
-    }
-}
-
-impl BorrowMut<EntityGraph<BranchKind>> for CDG {
-    fn borrow_mut(&mut self) -> &mut EntityGraph<BranchKind> {
-        &mut self.graph
-    }
-}
-
-impl BorrowMut<EntityGraph<BranchKind>> for &'_ mut CDG {
-    fn borrow_mut(&mut self) -> &mut EntityGraph<BranchKind> {
-        &mut self.graph
-    }
-}
-
-impl AsRef<EntityGraph<BranchKind>> for CDG {
-    fn as_ref(&self) -> &EntityGraph<BranchKind> {
-        &self.graph
-    }
-}
-
-impl AsMut<EntityGraph<BranchKind>> for CDG {
-    fn as_mut(&mut self) -> &mut EntityGraph<BranchKind> {
-        &mut self.graph
-    }
-}
-
-impl Deref for CDG {
-    type Target = EntityGraph<BranchKind>;
+impl<'a, V, E> Deref for CDG<'a, V, E>
+where V: Clone {
+    type Target = EntityGraph<'a, V, E>;
 
     fn deref(&self) -> &Self::Target {
         &self.graph
     }
 }
 
-impl DerefMut for CDG {
+impl<'a, V, E> DerefMut for CDG<'a, V, E>
+where V: Clone {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
 }
 
-impl CDG {
-    pub fn new(cfg: &CFG) -> CDG {
-        let mut entity_mapping = HashMap::new();
-        let mut rcfg = EntityGraph::new();
+impl<'a, V, E> AsEntityGraph<'a, V, E> for CDG<'a, V, E>
+where V: Clone {
+    fn entity_graph(&self) -> &EntityGraph<'a, V, E> {
+        &self.graph
+    }
+}
 
-        for eid in cfg.node_weights() {
-            entity_mapping.insert(eid.clone(), rcfg.add_node(eid.clone()));
-        }
+impl<'a, V, E> AsEntityGraphMut<'a, V, E> for CDG<'a, V, E>
+where V: Clone {
+    fn entity_graph_mut(&mut self) -> &mut EntityGraph<'a, V, E> {
+        &mut self.graph
+    }
+}
 
-        let mut graph = rcfg.clone();
+impl<'a, V, E> CDG<'a, V, E>
+where V: Clone,
+      E: Clone, {
+    pub fn new<G>(cfg: G) -> CDG<'a, V, E>
+    where G: AsEntityGraph<'a, V, E> {
+        let mut graph = EntityGraph::new();
 
-        for er in cfg.edge_references() {
-            let se = &cfg[er.source()];
-            let ee = &cfg[er.target()];
+        let rd = cfg.entity_graph().reverse_dominators();
+        let rdf = rd.dominance_frontier();
 
-            rcfg.add_edge(entity_mapping[ee], entity_mapping[se], *er.weight());
-        }
-
-        let df = rcfg.dominance_frontier();
-
-        for (nx, nys) in df.into_iter() {
-            for ny in nys.into_iter() {
-                if let Some(w) = rcfg.find_edge(ny, nx).and_then(|ex| rcfg.edge_weight(ex)) {
-                    graph.add_edge(ny, nx, *w);
+        for (vx, vys) in rdf.iter() {
+            for vy in vys.iter() {
+                if let Some(e) = cfg.entity_graph().edge(*vx, *vy) {
+                    let ey = cfg.entity_graph().entity(*vy);
+                    let ex = cfg.entity_graph().entity(*vx);
+                    graph.add_relation(ey, ex, e.clone());
                 }
             }
         }
 
         CDG {
             graph,
-            entity_mapping,
         }
     }
 }

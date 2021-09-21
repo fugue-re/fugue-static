@@ -4,6 +4,7 @@ pub use po::PostOrder;
 pub mod rpo;
 pub use rpo::RevPostOrder;
 
+/*
 use petgraph::graph::NodeIndex;
 
 use std::collections::VecDeque;
@@ -19,3 +20,4 @@ pub trait Traversal<'a> {
         Self::into_queue_with_roots(graph).1
     }
 }
+*/

@@ -10,14 +10,14 @@ use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::ops::Deref;
 
+use indexmap::map::IterMut as EntityIterMutInner;
+
 use crate::traits::IntoEntityRef;
 use crate::types::EntityRef;
 
 use super::traversals::{PostOrder, RevPostOrder};
 
-type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 type HashSet<K> = std::collections::HashSet<K, FxBuildHasher>;
-
 type IndexMap<K, V> = indexmap::IndexMap<K, V, FxBuildHasher>;
 type IndexSet<K> = indexmap::IndexSet<K, FxBuildHasher>;
 
@@ -122,10 +122,10 @@ where V: Clone {
 pub struct EntityGraph<'a, V, E> where V: Clone {
     pub(crate) entity_graph: StableDiGraph<EntityId, E>,
 
-    pub(crate) entity_mapping: IndexMap<EntityId, VertexIndex<V>>,
+    //pub(crate) entity_mapping: IndexMap<EntityId, VertexIndex<V>>,
     pub(crate) entity_roots: IndexSet<(EntityId, VertexIndex<V>)>,
 
-    pub(crate) entities: HashMap<EntityId, Cow<'a, Entity<V>>>,
+    pub(crate) entities: IndexMap<EntityId, (VertexIndex<V>, Cow<'a, Entity<V>>)>,
 }
 
 impl<'a, V, E> Default for EntityGraph<'a, V, E>
@@ -135,7 +135,7 @@ where
     fn default() -> Self {
         Self {
             entity_graph: Default::default(),
-            entity_mapping: Default::default(),
+            //entity_mapping: Default::default(),
             entity_roots: Default::default(),
             entities: Default::default(),
         }
@@ -151,11 +151,11 @@ where
         EntityGraph {
             entity_graph: self.entity_graph.clone(),
             entity_roots: self.entity_roots.clone(),
-            entity_mapping: self.entity_mapping.clone(),
+            //entity_mapping: self.entity_mapping.clone(),
             entities: self
                 .entities
                 .iter()
-                .map(|(id, v)| (id.clone(), Cow::Owned(v.as_ref().clone())))
+                .map(|(id, (vx, v))| (id.clone(), (*vx, Cow::Owned(v.as_ref().clone()))))
                 .collect(),
         }
     }
@@ -181,17 +181,17 @@ where
     }
 
     pub fn entity_vertex(&self, id: &EntityId) -> Option<VertexIndex<V>> {
-        self.entity_mapping.get(id).copied()
+        self.entities.get(id).map(|v| v.0)
     }
 
     pub fn entity(&self, vertex: VertexIndex<V>) -> &EntityRef<'a, V> {
         let id = &self.entity_graph[*vertex];
-        &self.entities[id]
+        &self.entities[id].1
     }
 
     pub fn entity_mut(&mut self, vertex: VertexIndex<V>) -> &mut EntityRef<'a, V> {
         let id = &self.entity_graph[*vertex];
-        self.entities.get_mut(id).unwrap()
+        &mut self.entities[id].1
     }
 
     pub fn contains_edge(&self, vs: VertexIndex<V>, vt: VertexIndex<V>) -> bool {
@@ -213,13 +213,12 @@ where
         T: IntoEntityRef<'a, T = V>,
     {
         let er = entity.into_entity_ref();
-        if let Some(nx) = self.entity_mapping.get(er.id()) {
-            *nx
+        if let Some(nx) = self.entities.get(er.id()) {
+            nx.0
         } else {
             let id = er.id();
             let nx = self.entity_graph.add_node(id.clone()).into();
-            self.entity_mapping.insert(id.clone(), nx);
-            self.entities.insert(id.clone(), er);
+            self.entities.insert(id.clone(), (nx, er));
             nx
         }
     }
@@ -259,6 +258,10 @@ where
 
     pub fn entities<'g>(&'g self) -> EntityRefIter<'g, 'a, V, E> {
         EntityRefIter::new(self)
+    }
+
+    pub fn entities_mut<'g>(&'g mut self) -> EntityRefIterMut<'g, 'a, V, E> {
+        EntityRefIterMut::new(self)
     }
 
     pub fn root_entities<'g>(&'g self) -> EntityRootIter<'g, 'a, V, E> {
@@ -508,7 +511,7 @@ where
         self.traverse.next(&self.graph.entity_graph).map(|nx| {
             let vx = VertexIndex::from(nx);
             let id = &self.graph.entity_graph[nx];
-            let er = &self.graph.entities[id];
+            let (_, er) = &self.graph.entities[id];
             (id, vx, er)
         })
     }
@@ -613,7 +616,7 @@ where
         self.traverse.next(&self.graph.entity_graph).map(|nx| {
             let vx = VertexIndex::from(nx);
             let id = &self.graph.entity_graph[nx];
-            let er = &self.graph.entities[id];
+            let (_, er) = &self.graph.entities[id];
             (id, vx, er)
         })
     }
@@ -644,7 +647,7 @@ where
     V: Clone,
 {
     graph: &'g EntityGraph<'a, V, E>,
-    eiter: indexmap::map::Iter<'g, EntityId, VertexIndex<V>>,
+    eiter: indexmap::map::Iter<'g, EntityId, (VertexIndex<V>, EntityRef<'a, V>)>,
 }
 
 impl<'g, 'a, V, E> EntityRefIter<'g, 'a, V, E>
@@ -654,7 +657,7 @@ where
     fn new(graph: &'g EntityGraph<'a, V, E>) -> Self {
         Self {
             graph,
-            eiter: graph.entity_mapping.iter(),
+            eiter: graph.entities.iter(),
         }
     }
 }
@@ -669,7 +672,46 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         self.eiter
             .next()
-            .map(|(eid, v)| (eid, *v, &self.graph.entities[eid]))
+            .map(|(eid, (v, e))| (eid, *v, e))
+    }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.eiter.size_hint()
+    }
+}
+
+pub struct EntityRefIterMut<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    eiter: EntityIterMutInner<'g, EntityId, (VertexIndex<V>, EntityRef<'a, V>)>,
+    marker: PhantomData<&'g E>,
+}
+
+impl<'g, 'a, V, E> EntityRefIterMut<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    fn new(graph: &'g mut EntityGraph<'a, V, E>) -> Self {
+        Self {
+            eiter: graph.entities.iter_mut(),
+            marker: PhantomData,
+        }
+    }
+}
+
+impl<'g, 'a, V, E> Iterator for EntityRefIterMut<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    type Item = (&'g EntityId, VertexIndex<V>, &'g mut EntityRef<'a, V>);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.eiter
+            .next()
+            .map(|(eid, (v, e))| (eid, *v, e))
     }
 
     #[inline(always)]
@@ -710,7 +752,7 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         self.eiter
             .next()
-            .map(|(eid, v)| (eid, *v, &self.graph.entities[eid]))
+            .map(|(eid, v)| (eid, *v, &self.graph.entities[eid].1))
     }
 
     #[inline(always)]

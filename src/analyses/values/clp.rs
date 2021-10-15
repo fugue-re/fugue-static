@@ -1,5 +1,7 @@
 use fugue::bv::BitVec;
-use std::ops::{Add, BitAnd, BitOr, BitXor, Mul, Neg, Not, Shl, Shr, Sub};
+
+use std::borrow::Borrow;
+use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 
 #[derive(Debug, Clone, Hash)]
 pub struct CLP {
@@ -37,11 +39,22 @@ fn cdiv(bv1: &BitVec, bv2: &BitVec) -> BitVec {
     }
 }
 
+fn add_exact(bv1: &BitVec, bv2: &BitVec) -> BitVec {
+    let bits = 1 + bv1.bits().max(bv2.bits());
+    let bv1 = bv1.clone().cast(bits);
+    let bv2 = bv2.clone().cast(bits);
+    bv1 + bv2
+}
+
 fn mul_exact(bv1: &BitVec, bv2: &BitVec) -> BitVec {
     let bits = bv1.bits() + bv2.bits();
     let bv1 = bv1.clone().cast(bits);
     let bv2 = bv2.clone().cast(bits);
     bv1 * bv2
+}
+
+fn shl_exact(bv: &BitVec, bits: usize) -> BitVec {
+    bv.unsigned_cast(bv.bits() + bits) << bits as u32
 }
 
 fn extract_lh(bv: &BitVec, high: usize, low: usize) -> BitVec {
@@ -629,6 +642,382 @@ impl CLP {
         }
     }
 
+    fn split_at_n(&self, n: &BitVec) -> (CLP, CLP) {
+        let p = self.canonise();
+        let card1 = CLP::card_from_bounds(&p.base, &p.step, n)
+            .min(p.card.clone());
+        let card2 = &p.card - &card1;
+        let p2_base = Self::nearest_inf_succ(&n.succ(), &p.base, &p.step);
+        (
+            CLP { base: p.base, step: p.step.clone(), card: card1 },
+            CLP { base: p2_base, step: p.step, card: card2 },
+        )
+    }
+
+    fn extract_exact(&self, width: usize) -> (CLP, CLP) {
+        let sz = self.bits();
+        assert!(width >= sz);
+
+        let lastn = BitVec::max_value_with(sz, false);
+        let (p1, p2) = self.split_at_n(&lastn);
+        (
+            CLP::new_with_width(p1.base, p1.step, p1.card, width),
+            CLP::new_with_width(p2.base, p2.step, p2.card, width),
+        )
+    }
+
+    fn extract_lo(&self, lo: usize) -> CLP {
+        let p = self.canonise();
+        let sz = p.bits();
+
+        assert!(lo < sz);
+
+        let rsz = sz - lo;
+        if lo == 0 {
+            p
+        } else {
+            || -> Option<CLP> {
+                let e = p.finite_end()?;
+                let base = extract_lh(&p.base, sz - 1, lo);
+
+                let base_mod2_lo = extract_lh(&p.base, lo - 1, 0);
+                let step_mod2_lo = extract_lh(&p.step, lo - 1, 0);
+
+                let max_step_eff = add_exact(&base_mod2_lo, &mul_exact(&step_mod2_lo, &p.card.pred()));
+                let carry_bound = dom_size(max_step_eff.bits(), lo);
+                if max_step_eff < carry_bound {
+                    Some(CLP::new_with(base, extract_lh(&p.step, sz, lo), p.card))
+                } else {
+                    let e = extract_lh(&e, sz, lo);
+                    let step = BitVec::one(rsz);
+                    let card = CLP::card_from_bounds(&base, &step, &e);
+                    Some(CLP::new_with(base, step, card))
+                }
+            }().unwrap_or_else(|| CLP::bottom(rsz))
+        }
+    }
+
+    fn extract_hi(&self, hi: Option<usize>, signed: bool) -> CLP {
+        let sz = self.bits();
+        let hiv = hi.unwrap_or_else(|| sz - 1);
+        if !signed && hiv + 1 >= sz {
+            let (r1, r2) = self.extract_exact(hiv + 1);
+            r1.union(&r2)
+        } else if !signed {
+            CLP::new_with_width(self.base.clone(), self.step.clone(), self.card.clone(), hiv + 1)
+        } else {
+            || -> Option<CLP> {
+                let e = self.finite_end()?;
+                let hsz = hiv + 1;
+                if self.is_infinite() {
+                    Some(CLP::infinite(self.base.unsigned_cast(hsz), self.step.unsigned_cast(hiv + 1)))
+                } else {
+                    let neg_min = BitVec::one(sz) << BitVec::from_usize(sz - 1, sz);
+                    let pos_max = neg_min.pred();
+                    if self.contains(&neg_min) && self.contains(&pos_max) && (self.base != neg_min || e != pos_max) {
+                        Some(CLP::top(hsz))
+                    } else {
+                        let e_ = &e - &self.base;
+                        let new_e = e_.unsigned_cast(hsz);
+                        let base = if signed {
+                            self.base.signed_cast(hsz)
+                        } else {
+                            self.base.unsigned_cast(hsz)
+                        };
+                        let step = self.step.unsigned_cast(hsz);
+                        if new_e < e_ {
+                            Some(CLP::infinite(base, step))
+                        } else {
+                            let card = CLP::card_from_bounds(&BitVec::zero(hsz), &step, &new_e);
+                            Some(CLP::new_with(base, step, card))
+                        }
+
+                    }
+                }
+            }().unwrap_or_else(|| CLP::bottom(hiv + 1))
+        }
+    }
+
+    // subpiece
+    pub fn extract(&self, hi: Option<usize>, lo: Option<usize>, signed: bool) -> CLP {
+        let lo = lo.unwrap_or(0);
+        let hi = hi.map(|hi| hi - lo);
+        self.extract_lo(lo).extract_hi(hi, signed)
+    }
+
+    pub fn signed_cast(&self, bits: usize) -> CLP {
+        self.extract(Some(bits - 1), None, true)
+    }
+
+    pub fn unsigned_cast(&self, bits: usize) -> CLP {
+        self.extract(Some(bits - 1), None, false)
+    }
+
+    pub fn concat(&self, rhs: &CLP) -> CLP {
+        let sz1 = self.bits();
+        let sz2 = rhs.bits();
+        let sz = sz1 + sz2;
+        let p1_base = shl_exact(&self.base, sz2);
+        let p1_step = shl_exact(&self.step, sz2);
+        let p1 = CLP::new_with(p1_base, p1_step, self.card.clone());
+        let p2 = rhs.unsigned_cast(sz);
+        p1 + p2
+    }
+
+    pub fn signed_shr<Rhs: Borrow<CLP>>(&self, rhs: Rhs) -> CLP {
+        let rhs = rhs.borrow();
+        let sz1 = self.bits();
+        let sz2 = rhs.bits();
+
+        let zero = BitVec::zero(sz1);
+        let p1 = self.canonise().unwrap_signed();
+        let p2 = rhs.canonise().unwrap();
+
+        || -> Option<CLP> {
+            let e1 = p1.finite_end()?;
+            let e2 = p2.finite_end()?;
+
+            if p1.card.is_zero() && p2.card.is_one() {
+                let base = p1.base.signed_shr(&p2.base);
+                Some(CLP::new(base))
+            } else {
+                let p1_base_signed = p1.base.clone().signed();
+                let base = if p1_base_signed >= zero {
+                    p1_base_signed.signed_shr(&e2)
+                } else {
+                    p1_base_signed.signed_shr(&p2.base)
+                };
+
+                let step = rshift_step(BitVec::signed_shr, &p1, &p2, &e2, sz1, sz2);
+
+                let e1_signed = e1.signed();
+                let new_e = if e1_signed >= zero {
+                    e1_signed.signed_shr(&p2.base)
+                } else {
+                    e1_signed.signed_shr(&e2)
+                };
+
+                let card = CLP::card_from_bounds(&base, &step, &new_e);
+
+                Some(CLP::new_with(base, step, card))
+            }
+        }().unwrap_or_else(|| CLP::bottom(sz1))
+    }
+
+    pub fn signed_div(&self, rhs: &CLP) -> CLP {
+        let sz = get_and_check_size(self, rhs);
+        || -> Option<CLP> {
+            let min_e1 = self.min_elem()?;
+            let max_e1 = self.max_elem()?;
+            let min_e2 = rhs.min_elem()?;
+            let max_e2 = rhs.max_elem()?;
+
+            if rhs.contains(&BitVec::zero(sz)) {
+                None // or panic!?
+            } else if self.cardinality().is_one() && rhs.cardinality().is_one() {
+                Some(CLP::new(self.base.signed_div(&rhs.base)))
+            } else {
+                let min_max = min_e1.signed_div(&max_e2);
+                let min_min = min_e1.signed_div(&min_e2);
+                let max_max = max_e1.signed_div(&max_e2);
+                let max_min = max_e1.signed_div(&min_e2);
+
+                let base = (&min_max)
+                    .min(&min_min)
+                    .min(&max_max)
+                    .min(&max_min)
+                    .clone();
+
+                let e = min_max
+                    .max(min_min)
+                    .max(max_max)
+                    .max(max_min);
+
+                let step = BitVec::one(sz);
+                let card = CLP::card_from_bounds(&base, &step, &e);
+                Some(CLP { base, step, card })
+            }
+        }().unwrap_or_else(|| CLP::bottom(sz))
+    }
+
+    pub fn signed_rem(&self, rhs: &CLP) -> CLP {
+        self.sub(&(&self.signed_div(&rhs)).mul(rhs))
+    }
+
+    pub fn widen_join(&self, rhs: &CLP) -> CLP {
+        assert!(self.subset(rhs));
+        if self == rhs {
+            self.clone()
+        } else {
+            CLP::infinite(rhs.base.clone(), rhs.step.clone())
+        }
+    }
+
+    pub fn true_() -> CLP {
+        CLP::new(BitVec::one(8))
+    }
+
+    pub fn false_() -> CLP {
+        CLP::new(BitVec::zero(8))
+    }
+
+    pub fn bool_top() -> CLP {
+        CLP::top(8)
+    }
+
+    pub fn bool_bottom() -> CLP {
+        CLP::top(8)
+    }
+
+    pub fn equal(&self, rhs: &CLP) -> CLP {
+        let sz1 = self.cardinality();
+        let sz2 = rhs.cardinality();
+
+        if sz1.is_zero() || sz2.is_zero() {
+            CLP::bool_bottom()
+        } else if sz1.is_one() && sz2.is_one() {
+            if self == rhs { // canonised
+                CLP::true_()
+            } else {
+                CLP::false_()
+            }
+        } else if self.overlap(&rhs) {
+            CLP::bool_top()
+        } else {
+            CLP::false_()
+        }
+    }
+
+    pub fn not_equal(&self, rhs: &CLP) -> CLP {
+        let sz1 = self.cardinality();
+        let sz2 = rhs.cardinality();
+
+        if sz1.is_zero() || sz2.is_zero() {
+            CLP::bool_bottom()
+        } else if sz1.is_one() && sz2.is_one() {
+            if self != rhs { // canonised
+                CLP::true_()
+            } else {
+                CLP::false_()
+            }
+        } else if self.overlap(&rhs) {
+            CLP::bool_top()
+        } else {
+            CLP::true_()
+        }
+    }
+
+    pub fn less(&self, rhs: &CLP) -> CLP {
+        || -> Option<CLP> {
+            let min_e1 = self.min_elem()?;
+            let max_e1 = self.max_elem()?;
+            let min_e2 = rhs.min_elem()?;
+            let max_e2 = rhs.max_elem()?;
+
+            Some(if max_e1 < min_e2 {
+                CLP::true_()
+            } else if min_e1 >= max_e2 {
+                CLP::false_()
+            } else {
+                CLP::bool_top()
+            })
+        }().unwrap_or_else(|| CLP::bool_bottom()) // bool is 8-bits
+    }
+
+    pub fn lesseq(&self, rhs: &CLP) -> CLP {
+        || -> Option<CLP> {
+            let min_e1 = self.min_elem()?;
+            let max_e1 = self.max_elem()?;
+            let min_e2 = rhs.min_elem()?;
+            let max_e2 = rhs.max_elem()?;
+
+            Some(if max_e1 <= min_e2 {
+                CLP::true_()
+            } else if min_e1 > max_e2 {
+                CLP::false_()
+            } else {
+                CLP::bool_top()
+            })
+        }().unwrap_or_else(|| CLP::bool_bottom()) // bool is 8-bits
+    }
+
+    pub fn signed_less(&self, rhs: &CLP) -> CLP {
+        || -> Option<CLP> {
+            let min_e1 = self.min_elem_signed()?;
+            let max_e1 = self.max_elem_signed()?;
+            let min_e2 = rhs.min_elem_signed()?;
+            let max_e2 = rhs.max_elem_signed()?;
+
+            Some(if max_e1.signed() < min_e2.signed() {
+                CLP::true_()
+            } else if min_e1.signed() >= max_e2.signed() {
+                CLP::false_()
+            } else {
+                CLP::bool_top()
+            })
+        }().unwrap_or_else(|| CLP::bool_bottom()) // bool is 8-bits
+    }
+
+    pub fn signed_lesseq(&self, rhs: &CLP) -> CLP {
+        || -> Option<CLP> {
+            let min_e1 = self.min_elem_signed()?;
+            let max_e1 = self.max_elem_signed()?;
+            let min_e2 = rhs.min_elem_signed()?;
+            let max_e2 = rhs.max_elem_signed()?;
+
+            Some(if max_e1.signed() <= min_e2.signed() {
+                CLP::true_()
+            } else if min_e1.signed() > max_e2.signed() {
+                CLP::false_()
+            } else {
+                CLP::bool_top()
+            })
+        }().unwrap_or_else(|| CLP::bool_bottom()) // bool is 8-bits
+    }
+
+    pub fn from_iter<I>(bvs: I, width: usize, signed: bool) -> CLP
+    where I: IntoIterator<Item=BitVec> {
+        assert!(width > 0);
+        || -> Option<CLP> {
+            let mut sorted = bvs.into_iter()
+                .map(|bv| if signed { bv.signed() } else { bv.unsigned() }.cast(width))
+                .collect::<Vec<_>>();
+            sorted.sort();
+
+            let sorted_last = sorted.last();
+            let sorted_rot = sorted_last.iter()
+                .map(|v| *v)
+                .chain(sorted.iter().skip(1));
+
+            let diffs = sorted.iter()
+                .zip(sorted_rot)
+                .enumerate()
+                .map(|(i, (l, r))| (i, l - r));
+
+            let (idx, _, step) = diffs.fold((0, BitVec::zero(width), BitVec::zero(width)), |(idx, diff, step), (i, d)| {
+                assert_eq!(diff.bits(), step.bits());
+                assert_eq!(diff.bits(), d.bits());
+
+                if d > diff {
+                    (i, d.clone(), diff.gcd(&step))
+                } else {
+                    (idx, diff, d.gcd(&step))
+                }
+            });
+
+            let (e, s) = sorted.split_at(idx);
+            let it = e.iter().chain(s.iter());
+
+            let base = it.clone().next()?;
+            let e = it.last()?;
+            let card = CLP::card_from_bounds(base, &step, e);
+
+            assert_eq!(base.bits(), width);
+
+            Some(CLP::new_with(base.clone(), step, card))
+        }().unwrap_or_else(|| CLP::bottom(width))
+    }
+
     pub fn iter(&self) -> CLPIter {
         CLPIter {
             clp: self.canonise(),
@@ -964,7 +1353,7 @@ impl Shl for &'_ CLP {
                 } else {
                     &self.base.gcd(&self.step) << &min_p2
                 };
-                let e_no_wrap = e1.unsigned_cast(e1.bits() + max_p2i as usize) << max_p2i;
+                let e_no_wrap = shl_exact(&e1, max_p2i as usize);
                 let e_width = e_no_wrap.bits();
                 let card = if step.is_zero() {
                     BitVec::one(1)
@@ -977,6 +1366,14 @@ impl Shl for &'_ CLP {
             }
 
         }().unwrap_or_else(|| CLP::bottom(sz1))
+    }
+}
+
+impl Shr for CLP {
+    type Output = CLP;
+
+    fn shr(self, rhs: Self) -> Self::Output {
+        (&self).shr(&rhs)
     }
 }
 
@@ -1005,11 +1402,56 @@ impl Shr for &'_ CLP {
     }
 }
 
-impl Shr for CLP {
+impl Div for CLP {
     type Output = CLP;
 
-    fn shr(self, rhs: Self) -> Self::Output {
-        (&self).shr(&rhs)
+    fn div(self, rhs: Self) -> Self::Output {
+        (&self).div(&rhs)
+    }
+}
+
+impl Div for &'_ CLP {
+    type Output = CLP;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        let sz = get_and_check_size(self, rhs);
+        || -> Option<CLP> {
+            let min_e1 = self.min_elem()?;
+            let max_e1 = self.max_elem()?;
+            let min_e2 = rhs.min_elem()?;
+            let max_e2 = rhs.max_elem()?;
+
+            if rhs.contains(&BitVec::zero(sz)) {
+                // TODO: division by zero
+                None // or panic!?
+            } else {
+                let base = min_e1 / max_e2;
+                let e = max_e1 / min_e2;
+                let step = if rhs.cardinality().is_one() && (&self.step % &rhs.base).is_zero() {
+                    (&self.step / &rhs.base).gcd(&(&(&self.base / &rhs.base) - &base))
+                } else {
+                    BitVec::one(sz)
+                };
+                let card = CLP::card_from_bounds(&base, &step, &e);
+                Some(CLP { base, step, card })
+            }
+        }().unwrap_or_else(|| CLP::bottom(sz))
+    }
+}
+
+impl Rem for CLP {
+    type Output = CLP;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        (&self).rem(&rhs)
+    }
+}
+
+impl Rem for &'_ CLP {
+    type Output = CLP;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        self.sub(&(&self.div(&rhs)).mul(rhs))
     }
 }
 

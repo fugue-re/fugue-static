@@ -121,6 +121,12 @@ pub trait VisitMut<'ecode> {
         self.visit_expr_mut(rexpr)
     }
 
+    fn visit_expr_ite_mut(&mut self, cond: &'ecode mut Expr, texpr: &'ecode mut Expr, fexpr: &'ecode mut Expr) {
+        self.visit_expr_mut(cond);
+        self.visit_expr_mut(texpr);
+        self.visit_expr_mut(fexpr)
+    }
+
     #[allow(unused_variables)]
     fn visit_expr_intrinsic_mut(
         &mut self,
@@ -157,6 +163,7 @@ pub trait VisitMut<'ecode> {
             }
             Expr::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
             Expr::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
+            Expr::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
             Expr::Intrinsic(ref name, ref mut args, bits) => {
                 self.visit_expr_intrinsic_mut(name, args, *bits)
             }

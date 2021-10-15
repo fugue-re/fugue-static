@@ -123,6 +123,12 @@ pub trait Visit<'ecode> {
         self.visit_expr(rexpr)
     }
 
+    fn visit_expr_ite(&mut self, cond: &'ecode Expr, texpr: &'ecode Expr, fexpr: &'ecode Expr) {
+        self.visit_expr(cond);
+        self.visit_expr(texpr);
+        self.visit_expr(fexpr)
+    }
+
     #[allow(unused_variables)]
     fn visit_expr_intrinsic(&mut self, name: &'ecode str, args: &'ecode [Box<Expr>], bits: usize) {
         for arg in args.iter() {
@@ -148,6 +154,7 @@ pub trait Visit<'ecode> {
             Expr::Load(ref expr, size, ref space) => self.visit_expr_load(expr, *size, space),
             Expr::Extract(ref expr, lsb, msb) => self.visit_expr_extract(expr, *lsb, *msb),
             Expr::Concat(ref lexpr, ref rexpr) => self.visit_expr_concat(lexpr, rexpr),
+            Expr::IfElse(ref cond, ref texpr, ref fexpr) => self.visit_expr_ite(cond, texpr, fexpr),
             Expr::Intrinsic(ref name, ref args, bits) => {
                 self.visit_expr_intrinsic(name, args, *bits)
             }

@@ -281,7 +281,7 @@ impl<'ecode> Default for Rewriter<'ecode> {
 
             rewrite!("add-0"; "(add ?a (constant ?z ?sz))" => "?a"),
             rewrite!("sub-0"; "(sub ?a (constant ?z ?sz))" => "?a"),
-            rewrite!("mul-0"; "(mul ?a (constant ?z ?sz))" => "(constant 0 ?sz)"),
+            rewrite!("mul-0"; "(mul ?a (constant ?z ?sz))" => "(constant 0:1 ?sz)"),
 
             rewrite!("eq-t0"; "(eq ?a ?a)" => "(constant 1:8 8)"),
 
@@ -349,7 +349,7 @@ impl<'ecode> Visit<'ecode> for Rewriter<'ecode> {
     fn visit_expr_val(&mut self, bv: &'ecode BitVec) {
         use ECodeLanguage as L;
 
-        let val = self.graph.add(L::Value(bv.to_u64().unwrap_or(0)));
+        let val = self.graph.add(L::BitVec(bv.clone())); // TODO: this could be a Cow<'_, BitVec>
         let siz = self.graph.add(L::Value(bv.bits() as u64));
 
         self.add(L::Constant([val, siz]))

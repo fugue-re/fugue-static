@@ -128,6 +128,13 @@ impl<'ecode> Visit<'ecode> for ConstEvaluator<'ecode> {
         }
     }
 
+    fn visit_expr_concat(&mut self, lexpr: &'ecode Expr, rexpr: &'ecode Expr) {
+        self.eval_binary_with(lexpr, rexpr, |l, r| {
+            let bits = l.bits() + r.bits();
+            Some(Cow::Owned(l.unsigned_cast(bits) << (r.bits() as u32) | r.unsigned_cast(bits)))
+        })
+    }
+
     fn visit_stmt(&mut self, stmt: &'ecode Stmt) {
         if let Stmt::Assign(var, expr) = stmt {
             self.set_variable(var);
@@ -162,5 +169,15 @@ mod test {
         println!("{}", value.unwrap());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_simplify_concat() {
+        let parts = Expr::concat(Expr::concat(Expr::concat(BitVec::from(3u8), BitVec::from(2u8)), BitVec::from(1u8)), BitVec::from(0u8));
+        let complete = BitVec::from(0x03020100u32);
+
+        println!("{} -> {}", parts, Expr::from(complete.clone()));
+
+        assert_eq!(parts.to_constant(), Some(complete));
     }
 }

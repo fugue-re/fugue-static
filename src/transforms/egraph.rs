@@ -164,7 +164,7 @@ impl Analysis<ECodeLanguage> for ConstantFolding {
                     Some(val.clone())
                 } else {
                     Some(if lsb > 0 {
-                        (val << lsb).unsigned_cast((msb - lsb) as usize)
+                        (val >> lsb).unsigned_cast((msb - lsb) as usize)
                     } else {
                         val.unsigned_cast((msb - lsb) as usize)
                     })

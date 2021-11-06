@@ -16,5 +16,8 @@ pub use variables::Variables;
 pub mod visitor;
 pub use visitor::Visit;
 
+pub mod visitor_map;
+pub use visitor_map::VisitMap;
+
 pub mod visitor_mut;
 pub use visitor_mut::VisitMut;

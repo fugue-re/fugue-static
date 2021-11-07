@@ -127,7 +127,7 @@ impl<'ecode, 'a> Visit<'ecode> for ConstEvaluator<'ecode, 'a> {
             UnOp::NEG => self.eval_unary_with(expr, |v| Some(Cow::Owned(-&*v))),
             UnOp::NOT => self.eval_unary_with(expr, |v| Some(Cow::Owned(!&*v))),
             UnOp::POPCOUNT => {
-                self.eval_unary_with(expr, |v| Some(Cow::Owned(BitVec::from(v.count_ones()))))
+                self.eval_unary_with(expr, |v| Some(Cow::Owned(BitVec::from_u32(v.count_ones(), v.bits()))))
             }
             _ => self.clear_value(),
         }

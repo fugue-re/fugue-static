@@ -2,7 +2,7 @@ use fugue::bv::BitVec;
 use fugue::ir::float_format::FloatFormat;
 use fugue::ir::il::ecode::{BinOp, BinRel, UnOp, UnRel};
 use fugue::ir::il::ecode::{BranchTarget, Cast, Expr, Location, Stmt, Var};
-use fugue::ir::AddressSpace;
+use fugue::ir::space::AddressSpaceId;
 
 use std::sync::Arc;
 
@@ -94,13 +94,13 @@ pub trait Visit<'ecode> {
     #[allow(unused)]
     fn visit_expr_load_size(&mut self, size: usize) {}
     #[allow(unused)]
-    fn visit_expr_load_space(&mut self, space: &'ecode Arc<AddressSpace>) {}
+    fn visit_expr_load_space(&mut self, space: AddressSpaceId) {}
 
     fn visit_expr_load(
         &mut self,
         expr: &'ecode Expr,
         size: usize,
-        space: &'ecode Arc<AddressSpace>,
+        space: AddressSpaceId,
     ) {
         self.visit_expr(expr);
         self.visit_expr_load_size(size);
@@ -151,7 +151,7 @@ pub trait Visit<'ecode> {
             Expr::BinRel(op, ref lexpr, ref rexpr) => self.visit_expr_binrel(*op, lexpr, rexpr),
             Expr::BinOp(op, ref lexpr, ref rexpr) => self.visit_expr_binop(*op, lexpr, rexpr),
             Expr::Cast(ref expr, ref cast) => self.visit_expr_cast(expr, cast),
-            Expr::Load(ref expr, size, ref space) => self.visit_expr_load(expr, *size, space),
+            Expr::Load(ref expr, size, space) => self.visit_expr_load(expr, *size, *space),
             Expr::Extract(ref expr, lsb, msb) => self.visit_expr_extract(expr, *lsb, *msb),
             Expr::Concat(ref lexpr, ref rexpr) => self.visit_expr_concat(lexpr, rexpr),
             Expr::IfElse(ref cond, ref texpr, ref fexpr) => self.visit_expr_ite(cond, texpr, fexpr),
@@ -171,9 +171,9 @@ pub trait Visit<'ecode> {
     #[allow(unused)]
     fn visit_stmt_store_size(&mut self, size: usize) {}
     #[allow(unused)]
-    fn visit_stmt_store_space(&mut self, space: &'ecode Arc<AddressSpace>) {}
+    fn visit_stmt_store_space(&mut self, space: AddressSpaceId) {}
 
-    fn visit_stmt_store_location(&mut self, expr: &'ecode Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
+    fn visit_stmt_store_location(&mut self, expr: &'ecode Expr, size: usize, space: AddressSpaceId) {
         self.visit_stmt_store_size(size);
         self.visit_stmt_store_space(space);
         self.visit_expr(expr);
@@ -188,7 +188,7 @@ pub trait Visit<'ecode> {
         loc: &'ecode Expr,
         val: &'ecode Expr,
         size: usize,
-        space: &'ecode Arc<AddressSpace>,
+        space: AddressSpaceId,
     ) {
         self.visit_stmt_store_location(loc, size, space);
         self.visit_stmt_store_value(val)
@@ -224,8 +224,8 @@ pub trait Visit<'ecode> {
     fn visit_stmt(&mut self, stmt: &'ecode Stmt) {
         match stmt {
             Stmt::Assign(ref var, ref expr) => self.visit_stmt_assign(var, expr),
-            Stmt::Store(ref loc, ref val, size, ref space) => {
-                self.visit_stmt_store(loc, val, *size, space)
+            Stmt::Store(ref loc, ref val, size, space) => {
+                self.visit_stmt_store(loc, val, *size, *space)
             }
             Stmt::Branch(ref branch_target) => self.visit_stmt_branch(branch_target),
             Stmt::CBranch(ref cond, ref branch_target) => {

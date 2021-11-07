@@ -2,15 +2,18 @@ use fugue::bv::BitVec;
 use fugue::ir::il::ecode::{BinOp, BinRel, Cast, Expr, Stmt, UnOp, UnRel, Var};
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
-use crate::traits::Visit;
+use crate::graphs::AsEntityGraphMut;
+use crate::models::block::Block;
+use crate::models::cfg::CFG;
+use crate::traits::*;
 
 #[derive(Default)]
 pub struct ConstEvaluator<'a, 'b> {
     value: Option<Cow<'a, BitVec>>,
     variable: Option<&'a Var>,
-    mapping: Cow<'b, BTreeMap<&'a Var, Cow<'a, BitVec>>>,
+    mapping: Cow<'b, BTreeMap<Var, Cow<'a, BitVec>>>,
 }
 
 impl<'a, 'b> ConstEvaluator<'a, 'b> {
@@ -21,14 +24,17 @@ impl<'a, 'b> ConstEvaluator<'a, 'b> {
         }
     }
 
+    pub fn eval_unary(&mut self, expr: &'a Expr) -> Option<Cow<'a, BitVec>> {
+        let mut v = self.fresh();
+        v.visit_expr(expr);
+        v.value
+    }
+
     pub fn eval_unary_with<F>(&mut self, expr: &'a Expr, f: F)
     where
         F: FnOnce(Cow<'a, BitVec>) -> Option<Cow<'a, BitVec>>,
     {
-        let mut lv = self.fresh();
-        lv.visit_expr(expr);
-
-        if let Some(val) = lv.value.and_then(|v| f(v)) {
+        if let Some(val) = self.eval_unary(expr).and_then(|v| f(v)) {
             self.value = Some(val);
         }
     }
@@ -37,13 +43,7 @@ impl<'a, 'b> ConstEvaluator<'a, 'b> {
     where
         F: FnOnce(Cow<'a, BitVec>, Cow<'a, BitVec>) -> Option<Cow<'a, BitVec>>,
     {
-        let mut lv = self.fresh();
-        lv.visit_expr(lexpr);
-
-        let mut rv = self.fresh();
-        rv.visit_expr(rexpr);
-
-        if let Some(val) = lv.value.and_then(|l| rv.value.and_then(|r| f(l, r))) {
+        if let Some(val) = self.eval_unary(lexpr).and_then(|l| self.eval_unary(rexpr).and_then(|r| f(l, r))) {
             self.value = Some(val);
         }
     }
@@ -254,10 +254,139 @@ impl<'ecode, 'a> Visit<'ecode> for ConstEvaluator<'ecode, 'a> {
         })
     }
 
+    fn visit_expr_extract(&mut self, expr: &'ecode Expr, lsb: usize, msb: usize) {
+        self.eval_unary_with(expr, |v| {
+            if (msb - lsb) == v.bits() {
+                Some(v)
+            } else if lsb > 0 {
+                Some(Cow::Owned((&*v >> lsb as u32).unsigned_cast((msb - lsb) as usize)))
+            } else {
+                Some(Cow::Owned(v.unsigned_cast((msb - lsb) as usize)))
+            }
+        })
+    }
+
+    fn visit_expr_ite(&mut self, cond: &'ecode Expr, texpr: &'ecode Expr, fexpr: &'ecode Expr) {
+        if let Some(c) = self.eval_unary(cond) {
+            self.value = self.eval_unary(if !c.is_zero() { texpr } else { fexpr })
+        } else {
+            self.clear_value()
+        }
+    }
+
     fn visit_stmt(&mut self, stmt: &'ecode Stmt) {
         if let Stmt::Assign(var, expr) = stmt {
             self.set_variable(var);
             self.visit_expr(expr);
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ConstFolder<'a, 'b> {
+    mapping: Cow<'b, BTreeMap<Var, Cow<'a, BitVec>>>,
+}
+
+impl<'ecode, 'a> VisitMut<'ecode> for ConstFolder<'ecode, 'a> {
+    fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
+        let mut eval = ConstEvaluator {
+            mapping: Cow::Borrowed(&*self.mapping),
+            ..Default::default()
+        };
+
+        eval.visit_expr(expr);
+
+        if let Some(val) = eval.into_value() {
+            *expr = Expr::Val(val);
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ConstSubst<'a, 'b> {
+    mapping: Cow<'b, BTreeMap<Var, Cow<'a, BitVec>>>,
+}
+
+impl<'ecode, 'a> VisitMut<'ecode> for ConstSubst<'ecode, 'a> {
+    fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
+        if let Expr::Var(var) = &*expr {
+            if let Some(val) = self.mapping.get(var) {
+                *expr = Expr::Val((**val).to_owned())
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ConstPropagator<'a, 'b> {
+    mapping: Cow<'b, BTreeMap<Var, Cow<'a, BitVec>>>,
+}
+
+pub trait ConstPropagate<'a, 'b> {
+    fn propagate_constants(&mut self, propagator: &mut ConstPropagator<'a, 'b>);
+}
+
+impl<'a, 'b> ConstPropagate<'a, 'b> for Stmt {
+    fn propagate_constants(&mut self, propagator: &mut ConstPropagator<'a, 'b>) {
+        propagator.propagate(self)
+    }
+}
+
+impl<'a, 'b> ConstPropagate<'a, 'b> for Block {
+    fn propagate_constants(&mut self, propagator: &mut ConstPropagator<'a, 'b>) {
+        propagator.propagate_block(self)
+    }
+}
+
+impl<'a, 'b> ConstPropagate<'a, 'b> for CFG<'a, Block> {
+    fn propagate_constants(&mut self, propagator: &mut ConstPropagator<'a, 'b>) {
+        propagator.propagate_graph(self)
+    }
+}
+
+impl<'a, 'b> ConstPropagator<'a, 'b> {
+    pub fn propagate(&mut self, stmt: &mut Stmt) {
+        let mut folder = ConstFolder {
+            mapping: Cow::Borrowed(&*self.mapping),
+            ..Default::default()
+        };
+        folder.visit_stmt_mut(stmt);
+
+        if let Stmt::Assign(ref var, Expr::Val(ref expr)) = &*stmt {
+            self.mapping.to_mut().insert(*var, Cow::Owned((*expr).to_owned()));
+        }
+    }
+
+    pub fn propagate_block(&mut self, blk: &mut Block) {
+        for (v, vs)  in blk.phis() {
+            if !self.mapping.contains_key(v) {
+                let mut vsf = vs.iter().map(|v| self.mapping.get(v));
+                if let Some(bv) = vsf.next().expect("non-empty phi assignment") {
+                    for vn in vsf {
+                        if !matches!(vn, Some(bvn) if bv == bvn) {
+                            continue
+                        }
+                    }
+                    let bv = bv.clone();
+                    self.mapping.to_mut().insert(*v, bv);
+                }
+            }
+        }
+
+        for op in blk.operations_mut() {
+            self.propagate(op.value_mut());
+        }
+    }
+
+    pub fn propagate_graph<'g, E, G>(&mut self, g: &mut G)
+    where G: AsEntityGraphMut<'g, Block, E> {
+        let graph = g.entity_graph_mut();
+        let mut rpo = graph.reverse_post_order().map(|(_, v, _)| v).collect::<VecDeque<_>>();
+        let mut prop = Self::default();
+
+        while let Some(vx) = rpo.pop_front() {
+            let blk = graph.entity_mut(vx);
+            prop.propagate_block(blk.to_mut());
         }
     }
 }

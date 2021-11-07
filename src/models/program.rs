@@ -93,7 +93,7 @@ impl<'db> Program<'db> {
     }
 
     pub fn function_by_address<A: IntoAddress>(&self, address: A) -> Option<&Entity<Function>> {
-        let address = address.into_address_value(self.translator.manager().default_space());
+        let address = address.into_address_value(self.translator.manager().default_space_ref());
         let location = Location::new(address, 0);
 
         self.functions_by_location

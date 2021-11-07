@@ -2,7 +2,7 @@ use fugue::bv::BitVec;
 use fugue::ir::float_format::FloatFormat;
 use fugue::ir::il::ecode::{BinOp, BinRel, UnOp, UnRel};
 use fugue::ir::il::ecode::{BranchTarget, Cast, Expr, Location, Stmt, Var};
-use fugue::ir::AddressSpace;
+use fugue::ir::space::AddressSpaceId;
 
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -96,8 +96,8 @@ pub trait VisitMap<'ecode> {
         Expr::Cast(Box::new(self.visit_expr(expr)), self.visit_cast(cast))
     }
 
-    fn visit_expr_load(&mut self, expr: Expr, size: usize, space: Arc<AddressSpace>) -> Expr {
-        Expr::load(self.visit_expr(expr), size, space)
+    fn visit_expr_load(&mut self, expr: Expr, size: usize, space: AddressSpaceId) -> Expr {
+        Expr::Load(Box::new(self.visit_expr(expr)), size, space)
     }
 
     fn visit_expr_extract(&mut self, expr: Expr, lsb: usize, msb: usize) -> Expr {
@@ -166,7 +166,7 @@ pub trait VisitMap<'ecode> {
         loc: Expr,
         val: Expr,
         size: usize,
-        space: Arc<AddressSpace>,
+        space: AddressSpaceId,
     ) -> Stmt {
         Stmt::Store(self.visit_expr(loc), self.visit_expr(val), size, space)
     }

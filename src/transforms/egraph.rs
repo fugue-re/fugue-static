@@ -2,10 +2,10 @@ use crate::models::Block;
 use crate::traits::Visit;
 
 use std::borrow::Cow;
-use std::sync::Arc;
 
 use fugue::bv::BitVec;
-use fugue::ir::{AddressSpace, AddressValue, Translator};
+use fugue::ir::{AddressValue, Translator};
+use fugue::ir::space::AddressSpaceId;
 use fugue::ir::il::ecode::{BinOp, BinRel, BranchTarget, Cast, Expr, Location, Stmt, UnOp, UnRel, Var};
 
 use egg::{define_language, EGraph, Id, Symbol};
@@ -467,7 +467,7 @@ impl<'ecode> Visit<'ecode> for Rewriter<'ecode> {
         }
     }
 
-    fn visit_expr_load(&mut self, expr: &'ecode Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
+    fn visit_expr_load(&mut self, expr: &'ecode Expr, size: usize, space: AddressSpaceId) {
         use ECodeLanguage as L;
 
         self.visit_expr(expr);
@@ -591,7 +591,7 @@ impl<'ecode> Visit<'ecode> for Rewriter<'ecode> {
         self.insert_id(var)
     }
 
-    fn visit_stmt_store(&mut self, loc: &'ecode Expr, val: &'ecode Expr, size: usize, space: &'ecode Arc<AddressSpace>) {
+    fn visit_stmt_store(&mut self, loc: &'ecode Expr, val: &'ecode Expr, size: usize, space: AddressSpaceId) {
         use ECodeLanguage as L;
 
         self.visit_expr(loc);
@@ -981,7 +981,7 @@ impl<'ecode> Rewriter<'ecode> {
             L::Store([tgt, src, sz, spc]) => {
                 let space = translator.manager()
                     .spaces()[Self::into_value(nodes, (*spc).into()) as usize]
-                    .clone();
+                    .id();
 
                 Stmt::Store(
                     Self::into_expr_aux(translator, nodes, (*tgt).into()),

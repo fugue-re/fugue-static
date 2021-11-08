@@ -736,12 +736,11 @@ impl<'ecode> Rewriter<'ecode> {
         use ECodeLanguage as L;
 
         if let L::Variable([spc, off, sz, gen]) = &nodes.as_ref()[i] {
-            let space = translator.manager()
-                .spaces()[Self::into_value(nodes, (*spc).into()) as usize]
-                .clone();
+            let space = &translator.manager()
+                .spaces()[Self::into_value(nodes, (*spc).into()) as usize];
 
             Var::new(
-                space,
+                &**space,
                 Self::into_value(nodes, (*off).into()),
                 Self::into_value(nodes, (*sz).into()) as usize,
                 Self::into_value(nodes, (*gen).into()) as usize,

@@ -1,3 +1,3 @@
 pub mod egraph;
-//pub mod pcode;
+pub mod normalise;
 pub mod ssa;

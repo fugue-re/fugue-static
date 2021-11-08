@@ -36,6 +36,8 @@ impl<'a, 'b> ConstEvaluator<'a, 'b> {
     {
         if let Some(val) = self.eval_unary(expr).and_then(|v| f(v)) {
             self.value = Some(val);
+        } else {
+            self.value = None;
         }
     }
 
@@ -45,6 +47,8 @@ impl<'a, 'b> ConstEvaluator<'a, 'b> {
     {
         if let Some(val) = self.eval_unary(lexpr).and_then(|l| self.eval_unary(rexpr).and_then(|r| f(l, r))) {
             self.value = Some(val);
+        } else {
+            self.value = None;
         }
     }
 
@@ -278,6 +282,8 @@ impl<'ecode, 'a> Visit<'ecode> for ConstEvaluator<'ecode, 'a> {
         if let Stmt::Assign(var, expr) = stmt {
             self.set_variable(var);
             self.visit_expr(expr);
+        } else {
+            self.clear_value();
         }
     }
 }
@@ -350,7 +356,9 @@ impl<'a, 'b> ConstPropagator<'a, 'b> {
             mapping: Cow::Borrowed(&*self.mapping),
             ..Default::default()
         };
+        println!("before: {}", stmt);
         folder.visit_stmt_mut(stmt);
+        println!("after: {}", stmt);
 
         if let Stmt::Assign(ref var, Expr::Val(ref expr)) = &*stmt {
             self.mapping.to_mut().insert(*var, Cow::Owned((*expr).to_owned()));
@@ -374,6 +382,7 @@ impl<'a, 'b> ConstPropagator<'a, 'b> {
         }
 
         for op in blk.operations_mut() {
+            println!("at: {}", op.location());
             self.propagate(op.value_mut());
         }
     }

@@ -8,9 +8,7 @@ use crate::graphs::algorithms::dominance::{Dominance, DominanceTree};
 use crate::graphs::entity::{AsEntityGraphMut, VertexIndex};
 use crate::models::Block;
 use crate::traits::Variables;
-
-pub mod simple_var;
-use simple_var::SimpleVar;
+use crate::types::SimpleVar;
 
 type SSAMapping<'a> = HashMap<SimpleVar<'a>, usize>;
 

@@ -84,6 +84,10 @@ impl<'db> Program<'db> {
         })
     }
 
+    pub fn translator(&self) -> &Translator {
+        &self.translator
+    }
+
     pub fn blocks(&self) -> &EntityMap<Block> {
         &self.blocks
     }

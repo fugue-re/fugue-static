@@ -1,7 +1,7 @@
 use crate::analyses::fixed_point::FixedPointForward;
 use crate::models::block::Block;
 use crate::traits::*;
-use crate::transforms::ssa::simple_var::SimpleVar;
+use crate::types::SimpleVar;
 use crate::graphs::entity::AsEntityGraph;
 
 use fugue::ir::il::ecode::EntityId;

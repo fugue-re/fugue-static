@@ -40,12 +40,12 @@ impl<'a, T> VarClass<'a> for T where T: 'a, &'a T: Into<SimpleVar<'a>> {
 }
 
 #[derive(Debug, Clone)]
-pub struct AliasedDefs<'v> {
+pub struct AliasedVars<'v> {
     classes: VarViews<'v>,
     all_vars: bool,
 }
 
-impl<'v> From<VarViews<'v>> for AliasedDefs<'v> {
+impl<'v> From<VarViews<'v>> for AliasedVars<'v> {
     fn from(classes: VarViews<'v>) -> Self {
         Self {
             classes,
@@ -54,7 +54,7 @@ impl<'v> From<VarViews<'v>> for AliasedDefs<'v> {
     }
 }
 
-impl<'v> AliasedDefs<'v> {
+impl<'v> AliasedVars<'v> {
     pub fn new() -> Self {
         Self {
             classes: VarViews::default(),
@@ -73,7 +73,7 @@ impl<'v> AliasedDefs<'v> {
         Self::from(VarViews::registers(translator))
     }
 
-    pub fn transform_cfg(&mut self, graph: &mut CFG<Block>) {
+    pub fn transform(&mut self, graph: &mut CFG<Block>) {
         self.reset();
         self.classes.merge(Self::variable_aliases(graph));
 
@@ -152,7 +152,7 @@ impl<'v> AliasedDefs<'v> {
     }
 }
 
-impl<'ecode, 'v> VisitMut<'ecode> for AliasedDefs<'v> {
+impl<'ecode, 'v> VisitMut<'ecode> for AliasedVars<'v> {
     fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
         match expr {
             Expr::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
@@ -201,6 +201,16 @@ impl<'ecode, 'v> VisitMut<'ecode> for AliasedDefs<'v> {
     }
 }
 
+pub trait NormaliseAliases {
+    fn normalise_aliases(&mut self, aliases: &mut AliasedVars);
+}
+
+impl<'ecode> NormaliseAliases for CFG<'ecode, Block> {
+    fn normalise_aliases(&mut self, aliases: &mut AliasedVars) {
+        aliases.transform(self)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use fugue::bytes::Endian;
@@ -223,7 +233,7 @@ mod test {
         translator.set_variable_default("rexprefix", 0);
 
         let base = VarViews::registers(&translator);
-        let mut defs = AliasedDefs::from(base);
+        let mut defs = AliasedVars::from(base);
 
         let rax = Var::from(*translator.register_by_name("RAX").unwrap());
         let ax = Var::from(*translator.register_by_name("AX").unwrap());

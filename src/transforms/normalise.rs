@@ -15,12 +15,13 @@
 /// Lift -> Normalise -> SSA
 ///
 
-use std::borrow::{Borrow, Cow};
+use std::borrow::Borrow;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::iter::FromIterator;
 
-use fugue::ir::il::ecode::{EntityId, Expr, Var};
+use fugue::ir::Translator;
+use fugue::ir::il::ecode::{Expr, Var};
 
 use crate::models::{Block, CFG};
 use crate::types::{SimpleVar, VarViews};
@@ -38,20 +39,14 @@ impl<'a, T> VarClass<'a> for T where T: 'a, &'a T: Into<SimpleVar<'a>> {
     }
 }
 
-#[derive(educe::Educe)]
-#[educe(Clone, Default, PartialOrd, PartialEq, Eq)]
-pub struct DefinitionMap<'a, 'ecode> {
-    mapping: Cow<'a, BTreeMap<SimpleVar<'ecode>, BTreeSet<EntityId>>>,
-}
-
 #[derive(Debug, Clone)]
-pub struct AliasedDefs {
-    classes: VarViews,
+pub struct AliasedDefs<'v> {
+    classes: VarViews<'v>,
     all_vars: bool,
 }
 
-impl From<VarViews> for AliasedDefs {
-    fn from(classes: VarViews) -> Self {
+impl<'v> From<VarViews<'v>> for AliasedDefs<'v> {
+    fn from(classes: VarViews<'v>) -> Self {
         Self {
             classes,
             all_vars: false,
@@ -59,7 +54,7 @@ impl From<VarViews> for AliasedDefs {
     }
 }
 
-impl AliasedDefs {
+impl<'v> AliasedDefs<'v> {
     pub fn new(graph: &CFG<Block>) -> Self {
         Self {
             classes: Self::variable_aliases(graph),
@@ -76,6 +71,19 @@ impl AliasedDefs {
             },
             all_vars: false,
         }
+    }
+
+    pub fn registers<T: Borrow<Translator>>(translator: T) -> Self {
+        Self::from(VarViews::registers(translator))
+    }
+
+    pub fn update(&mut self, graph: &CFG<Block>) {
+        self.reset();
+        self.classes.merge(Self::variable_aliases(graph))
+    }
+
+    pub fn reset(&mut self) {
+        self.classes.reset()
     }
 
     pub fn all_variables(&mut self, toggle: bool) {
@@ -103,7 +111,7 @@ impl AliasedDefs {
     /// The goal of this analysis is to minimise the number of inserted
     /// definitions. Therefore, this function only considers aliases with
     /// respect to the CFG being transformed.
-    fn variable_aliases(graph: &CFG<Block>) -> VarViews {
+    fn variable_aliases(graph: &CFG<Block>) -> VarViews<'v> {
         let mut defs = BTreeSet::new();
         let mut uses = BTreeSet::new();
 
@@ -153,7 +161,7 @@ impl AliasedDefs {
     }
 }
 
-impl<'ecode> VisitMut<'ecode> for AliasedDefs {
+impl<'ecode, 'v> VisitMut<'ecode> for AliasedDefs<'v> {
     fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
         match expr {
             Expr::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),

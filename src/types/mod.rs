@@ -119,9 +119,9 @@ impl<'a> Hash for SimpleVar<'a> {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct VarViews(BTreeMap<AddressSpaceId, IntervalSet<u64>>);
+pub struct VarViews<'v>(BTreeMap<AddressSpaceId, Cow<'v, IntervalSet<u64>>>);
 
-impl<'a> FromIterator<&'a Var> for VarViews {
+impl<'a, 'v> FromIterator<&'a Var> for VarViews<'v> {
     fn from_iter<T: IntoIterator<Item = &'a Var>>(iter: T) -> Self {
         let mut views = Self::default();
         for var in iter.into_iter() {
@@ -131,7 +131,7 @@ impl<'a> FromIterator<&'a Var> for VarViews {
     }
 }
 
-impl VarViews {
+impl<'v> VarViews<'v> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -144,11 +144,11 @@ impl VarViews {
 
         m.insert(
             space_id,
-            IntervalSet::from_iter(
+            Cow::Owned(IntervalSet::from_iter(
                 t.registers()
                     .iter()
                     .map(|((off, sz), _)| (Interval::from(*off..=(off + (*sz as u64) - 1)), ())),
-            ),
+            )),
         );
 
         Self(m)
@@ -157,13 +157,17 @@ impl VarViews {
     pub fn merge(&mut self, other: VarViews) {
         for (spc, ivss) in other.0.into_iter() {
             let ivsd = self.0.entry(spc).or_default();
-            ivsd.extend(ivss.into_iter());
+            ivsd.to_mut().extend(ivss.iter().map(|(k, _)| (k, ())));
         }
     }
 
     pub fn insert<'a, V: Into<SimpleVar<'a>>>(&mut self, var: V) {
         let (space, iv) = Self::interval(var);
-        self.0.entry(space).or_default().insert(iv, ());
+        self.0.entry(space).or_default().to_mut().insert(iv, ());
+    }
+
+    pub fn reset(&mut self) {
+        self.0.retain(|s, _| s.is_register())
     }
 
     pub fn replace_overlaps<'a, 'b, V: Into<SimpleVar<'a>>>(
@@ -180,7 +184,8 @@ impl VarViews {
         let var = var.into();
         let (space, iv) = Self::interval(&var);
         if let Some(ivs) = self.0.get_mut(&space) {
-            ivs.take_overlaps(iv)
+            ivs.to_mut()
+                .take_overlaps(iv)
                 .into_iter()
                 .map(|(iv, _)| {
                     SimpleVar::from(Var::new(
@@ -199,7 +204,7 @@ impl VarViews {
     pub fn remove_overlaps<'a, V: Into<SimpleVar<'a>>>(&mut self, var: V) {
         let (space, iv) = Self::interval(var);
         if let Some(ref mut ivs) = self.0.get_mut(&space) {
-            ivs.remove_overlaps(iv)
+            ivs.to_mut().remove_overlaps(iv)
         }
     }
 

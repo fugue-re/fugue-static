@@ -153,14 +153,15 @@ fn transform_rename<'a, E, G>(
         }
 
         for op in block.value_mut().operations_mut() {
-            for var in op.value_mut().used_variables_mut::<Vec<_>>().into_iter() {
+            let oper = op.value_mut();
+            for var in oper.used_variables_mut::<Vec<_>>().into_iter() {
                 let simple = SimpleVar::from(&*var);
                 if let Some(generation) = renamer.current(&simple) {
                     *var = var.with_generation(generation);
                 }
             }
 
-            for var in op.value_mut().defined_variables_mut::<Vec<_>>().into_iter() {
+            for var in oper.defined_variables_mut::<Vec<_>>().into_iter() {
                 let simple = SimpleVar::owned(&*var);
                 *var = var.with_generation(renamer.define(&mut gmapping, simple));
             }

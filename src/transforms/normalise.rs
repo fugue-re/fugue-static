@@ -177,10 +177,8 @@ impl<'ecode, 'v> VisitMut<'ecode> for AliasedVars<'v> {
                 let svar = SimpleVar::from(&*var);
                 let pvar = self.classes.enclosing(&svar);
 
-                if svar != pvar {
-                    let rvar = **pvar;
-                    *expr = Self::resize_expr(&pvar, &svar, Expr::from(rvar));
-                }
+                let rvar = **pvar;
+                *expr = Self::resize_expr(&pvar, &svar, Expr::from(rvar));
             },
             Expr::Val(_) => (),
         }
@@ -191,12 +189,12 @@ impl<'ecode, 'v> VisitMut<'ecode> for AliasedVars<'v> {
             let svar = SimpleVar::from(&*var);
             let pvar = self.classes.enclosing(&svar);
 
-            if svar != pvar {
-                // expand
-                let rvar = Var::new(pvar.space(), pvar.offset(), pvar.bits(), var.generation());
-                *expr = Self::resize_expr(&svar, &pvar, &*expr);
-                *var = rvar;
-            }
+            // expand
+            self.visit_expr_mut(expr);
+
+            let rvar = Var::new(pvar.space(), pvar.offset(), pvar.bits(), var.generation());
+            *expr = Self::resize_expr(&svar, &pvar, &*expr);
+            *var = rvar;
         }
     }
 }

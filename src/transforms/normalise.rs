@@ -55,20 +55,16 @@ impl<'v> From<VarViews<'v>> for AliasedDefs<'v> {
 }
 
 impl<'v> AliasedDefs<'v> {
-    pub fn new(graph: &CFG<Block>) -> Self {
+    pub fn new() -> Self {
         Self {
-            classes: Self::variable_aliases(graph),
+            classes: VarViews::default(),
             all_vars: false,
         }
     }
 
-    pub fn new_with(graph: &CFG<Block>, views: VarViews) -> Self {
+    pub fn new_with(classes: VarViews<'v>) -> Self {
         Self {
-            classes: {
-                let mut vars = Self::variable_aliases(graph);
-                vars.merge(views);
-                vars
-            },
+            classes,
             all_vars: false,
         }
     }
@@ -77,9 +73,18 @@ impl<'v> AliasedDefs<'v> {
         Self::from(VarViews::registers(translator))
     }
 
-    pub fn update(&mut self, graph: &CFG<Block>) {
+    pub fn transform_cfg(&mut self, graph: &mut CFG<Block>) {
         self.reset();
-        self.classes.merge(Self::variable_aliases(graph))
+        self.classes.merge(Self::variable_aliases(graph));
+
+        for (_, _, blk) in graph.entities_mut() {
+            let nblk = blk.to_mut();
+            for op in nblk.operations_mut() {
+                self.visit_stmt_mut(op.value_mut());
+            }
+        }
+
+        self.reset();
     }
 
     pub fn reset(&mut self) {
@@ -92,20 +97,6 @@ impl<'v> AliasedDefs<'v> {
 
     fn should_transform(&self, var: &Var) -> bool {
         self.all_vars || var.space().is_unique() || var.space().is_register()
-    }
-
-    pub fn transform(graph: &mut CFG<Block>) {
-        Self::transform_with(graph, Default::default())
-    }
-
-    pub fn transform_with(graph: &mut CFG<Block>, views: VarViews) {
-        let mut defs = Self::new_with(graph, views);
-        for (_, _, blk) in graph.entities_mut() {
-            let nblk = blk.to_mut();
-            for op in nblk.operations_mut() {
-                defs.visit_stmt_mut(op.value_mut());
-            }
-        }
     }
 
     /// The goal of this analysis is to minimise the number of inserted

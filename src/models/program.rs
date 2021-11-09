@@ -184,3 +184,9 @@ impl<'db> Borrow<Translator> for Program<'db> {
         self.translator()
     }
 }
+
+impl<'db> Borrow<Translator> for &'_ Program<'db> {
+    fn borrow(&self) -> &Translator {
+        self.translator()
+    }
+}

@@ -5,6 +5,7 @@ use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
 use fugue::ir::space::{AddressSpace, SpaceKind};
 use fugue::ir::Translator;
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -175,5 +176,11 @@ impl<'db> Program<'db> {
             }
         }
         icfg
+    }
+}
+
+impl<'db> Borrow<Translator> for Program<'db> {
+    fn borrow(&self) -> &Translator {
+        self.translator()
     }
 }

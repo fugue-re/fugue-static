@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
@@ -7,10 +7,9 @@ use std::ops::Deref;
 
 use interval_tree::{Interval, IntervalSet};
 
+use fugue::ir::Translator;
 use fugue::ir::il::ecode::{Entity, EntityId, Var};
 use fugue::ir::space::AddressSpaceId;
-
-use crate::models::Program;
 
 pub type EntityRef<'a, T> = Cow<'a, Entity<T>>;
 pub type EntityMap<T> = HashMap<EntityId, Entity<T>>;
@@ -137,8 +136,8 @@ impl VarViews {
         Self::default()
     }
 
-    pub fn registers(program: &Program) -> Self {
-        let t = program.translator();
+    pub fn registers<T: Borrow<Translator>>(translator: T) -> Self {
+        let t = translator.borrow();
         let space_id = t.manager().register_space_id();
 
         let mut m = BTreeMap::new();
@@ -148,7 +147,7 @@ impl VarViews {
             IntervalSet::from_iter(
                 t.registers()
                     .iter()
-                    .map(|((off, sz), _)| (Interval::from(off + (off + (*sz as u64) - 1)), ())),
+                    .map(|((off, sz), _)| (Interval::from(*off..=(off + (*sz as u64) - 1)), ())),
             ),
         );
 
@@ -187,7 +186,7 @@ impl VarViews {
                     SimpleVar::from(Var::new(
                         space,
                         *iv.start(),
-                        (1 + *iv.end() - *iv.start()) as usize,
+                        8 * (1 + *iv.end() - *iv.start()) as usize,
                         var.generation(),
                     ))
                 })
@@ -215,7 +214,7 @@ impl VarViews {
                     SimpleVar::from(Var::new(
                         space,
                         *iv.start(),
-                        (1 + *iv.end() - *iv.start()) as usize,
+                        8 * (1 + *iv.end() - *iv.start()) as usize,
                         var.generation(),
                     ))
                 })
@@ -242,7 +241,7 @@ impl VarViews {
             SimpleVar::from(Var::new(
                 space,
                 *iv.start(),
-                (1 + *iv.end() - *iv.start()) as usize,
+                8 * (1 + *iv.end() - *iv.start()) as usize,
                 var.generation(),
             ))
         } else {

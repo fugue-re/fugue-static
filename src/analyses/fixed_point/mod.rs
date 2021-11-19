@@ -7,7 +7,7 @@ pub trait FixedPointBackward<'a, V, E, G, O>
 where V: 'a + Clone,
       E: 'a,
       G: AsEntityGraph<'a, V, E>,
-      O: Clone + Default {
+      O: Clone + Default + Eq {
     type Err: std::error::Error;
 
     fn join(&mut self, current: O, next: &O) -> Result<O, Self::Err>;
@@ -40,6 +40,10 @@ where V: 'a + Clone,
             let eid = entity.id();
             let current = self.transfer(entity.value(), current_in)?;
 
+            if matches!(results.get(eid), Some(old_current) if *old_current == current) {
+                continue
+            }
+
             results.insert(eid.clone(), current);
 
             for (pred, _) in graph.predecessors(node) {
@@ -57,7 +61,7 @@ pub trait FixedPointForward<'a, V, E, G, O>
 where V: 'a + Clone,
       E: 'a,
       G: AsEntityGraph<'a, V, E>,
-      O: Clone + Default {
+      O: Clone + Default + Eq {
     type Err: std::error::Error;
 
     fn join(&mut self, current: O, next: &O) -> Result<O, Self::Err>;
@@ -89,6 +93,10 @@ where V: 'a + Clone,
             let entity = graph.entity(node);
             let eid = entity.id();
             let current = self.transfer(entity.value(), current_in)?;
+
+            if matches!(results.get(eid), Some(old_current) if *old_current == current) {
+                continue
+            }
 
             results.insert(eid.clone(), current);
 

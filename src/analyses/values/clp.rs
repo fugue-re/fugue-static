@@ -975,7 +975,7 @@ impl CLP {
         }().unwrap_or_else(|| CLP::bool_bottom()) // bool is 8-bits
     }
 
-    pub fn from_iter<I>(bvs: I, width: usize, signed: bool) -> CLP
+    pub fn from_iter_with<I>(bvs: I, width: usize, signed: bool) -> CLP
     where I: IntoIterator<Item=BitVec> {
         assert!(width > 0);
         || -> Option<CLP> {

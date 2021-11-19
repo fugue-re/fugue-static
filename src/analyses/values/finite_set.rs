@@ -2,6 +2,10 @@ use fugue::bv::BitVec;
 use std::collections::BTreeSet;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 
+use std::collections::btree_set::IntoIter;
+
+pub type FiniteSetIter = IntoIter<BitVec>;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FiniteSet {
     bits: usize,
@@ -289,6 +293,15 @@ impl FiniteSet {
 
     pub fn bits(&self) -> usize {
         self.bits
+    }
+}
+
+impl IntoIterator for FiniteSet {
+    type Item = BitVec;
+    type IntoIter = FiniteSetIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.set.into_iter()
     }
 }
 

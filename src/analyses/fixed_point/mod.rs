@@ -1,40 +1,19 @@
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 
 use crate::graphs::entity::AsEntityGraph;
 use crate::traits::collect::EntityValueCollector;
 
-use fugue::ir::il::ecode::EntityId;
-
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum AnalysisError<E: std::error::Error> {
-    #[error(transparent)]
-    Analysis(#[from] E),
-    #[error("cannot order outputs for {0}")]
-    CannotOrder(EntityId),
-    #[error("new output for {0} is less than previous output")]
-    LostInformation(EntityId),
-}
-
 pub trait FixedPointBackward<'a, V, E, G, O>
 where V: 'a + Clone,
       E: 'a,
       G: AsEntityGraph<'a, V, E>,
-      O: Clone + Default + PartialOrd {
+      O: Clone + Default {
     type Err: std::error::Error;
 
     fn join(&mut self, current: O, next: &O) -> Result<O, Self::Err>;
     fn transfer(&mut self, entity: &'a V, current: Option<O>) -> Result<O, Self::Err>;
 
-    #[inline(always)]
-    fn analyse<C>(&mut self, g: &'a G) -> Result<C, AnalysisError<Self::Err>>
-    where C: EntityValueCollector<O> {
-        self.analyse_with(g, false)
-    }
-
-    fn analyse_with<C>(&mut self, g: &'a G, always_merge: bool) -> Result<C, AnalysisError<Self::Err>>
+    fn analyse<C>(&mut self, g: &'a G) -> Result<C, Self::Err>
     where C: EntityValueCollector<O> {
         let mut results = C::default();
 
@@ -59,24 +38,7 @@ where V: 'a + Clone,
 
             let entity = graph.entity(node);
             let eid = entity.id();
-            let mut current = self.transfer(entity.value(), current_in)?;
-
-            if let Some(old_current) = results.get(eid) {
-                match current.partial_cmp(old_current) {
-                    Some(Ordering::Greater) => (),
-                    Some(Ordering::Equal) => continue, // no change
-                    None | Some(Ordering::Less) if always_merge => {
-                        current = self.join(current, old_current)?;
-                    },
-                    Some(Ordering::Less) => {
-                        return Err(AnalysisError::CannotOrder(eid.clone()))
-                    },
-                    None => {
-                        return Err(AnalysisError::CannotOrder(eid.clone()))
-                    },
-
-                }
-            }
+            let current = self.transfer(entity.value(), current_in)?;
 
             results.insert(eid.clone(), current);
 
@@ -95,19 +57,13 @@ pub trait FixedPointForward<'a, V, E, G, O>
 where V: 'a + Clone,
       E: 'a,
       G: AsEntityGraph<'a, V, E>,
-      O: Clone + Default + PartialOrd {
+      O: Clone + Default {
     type Err: std::error::Error;
 
     fn join(&mut self, current: O, next: &O) -> Result<O, Self::Err>;
     fn transfer(&mut self, entity: &'a V, current: Option<O>) -> Result<O, Self::Err>;
 
-    #[inline(always)]
-    fn analyse<C>(&mut self, g: &'a G) -> Result<C, AnalysisError<Self::Err>>
-    where C: EntityValueCollector<O> {
-        self.analyse_with(g, false)
-    }
-
-    fn analyse_with<C>(&mut self, g: &'a G, always_merge: bool) -> Result<C, AnalysisError<Self::Err>>
+    fn analyse<C>(&mut self, g: &'a G) -> Result<C, Self::Err>
     where C: EntityValueCollector<O> {
         let mut results = C::default();
 
@@ -132,24 +88,7 @@ where V: 'a + Clone,
 
             let entity = graph.entity(node);
             let eid = entity.id();
-            let mut current = self.transfer(entity.value(), current_in)?;
-
-            if let Some(old_current) = results.get(eid) {
-                match current.partial_cmp(old_current) {
-                    Some(Ordering::Greater) => (),
-                    Some(Ordering::Equal) => continue, // no change
-                    None | Some(Ordering::Less) if always_merge => {
-                        current = self.join(current, old_current)?;
-                    },
-                    Some(Ordering::Less) => {
-                        return Err(AnalysisError::CannotOrder(eid.clone()))
-                    },
-                    None => {
-                        return Err(AnalysisError::CannotOrder(eid.clone()))
-                    },
-
-                }
-            }
+            let current = self.transfer(entity.value(), current_in)?;
 
             results.insert(eid.clone(), current);
 

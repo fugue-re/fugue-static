@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::models::Block;
 use crate::models::{Function, FunctionLifter};
 use crate::models::{CFG, CG};
+use crate::transforms::normalise::{NormaliseVariables, VariableNormaliser};
 use crate::types::EntityMap;
 
 use thiserror::Error;
@@ -59,8 +60,12 @@ impl<'db> Program<'db> {
         let mut functions_by_symbol = HashMap::default();
         let mut functions_by_location = HashMap::default();
 
+        let mut normaliser = VariableNormaliser::new(&trans);
+
         for f in database.functions() {
-            let (fcn, blks) = function_lifter.from_function(f)?;
+            let (fcn, blks) = function_lifter.from_function_with(f, |ecode| {
+                ecode.normalise_variables(&mut normaliser)
+            })?;
 
             let id = fcn.id().clone();
             let location = fcn.value().location().to_owned();
@@ -72,6 +77,8 @@ impl<'db> Program<'db> {
 
             blocks.reserve(blks.len());
             blocks.extend(blks.into_iter().map(|blk| (blk.id().clone(), blk)));
+
+            normaliser.reset();
         }
 
         Ok(Program {

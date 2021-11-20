@@ -40,15 +40,13 @@ where V: 'a + Clone,
             let eid = entity.id();
             let current = self.transfer(entity.value(), current_in)?;
 
-            if matches!(results.get(eid), Some(old_current) if *old_current == current) {
-                continue
-            }
+            if !matches!(results.get(eid), Some(old_current) if *old_current == current) {
+                results.insert(eid.clone(), current);
 
-            results.insert(eid.clone(), current);
-
-            for (pred, _) in graph.predecessors(node) {
-                if !queue.contains(&pred) {
-                    queue.push_back(pred);
+                for (pred, _) in graph.predecessors(node) {
+                    if !queue.contains(&pred) {
+                        queue.push_back(pred);
+                    }
                 }
             }
         }
@@ -94,15 +92,13 @@ where V: 'a + Clone,
             let eid = entity.id();
             let current = self.transfer(entity.value(), current_in)?;
 
-            if matches!(results.get(eid), Some(old_current) if *old_current == current) {
-                continue
-            }
+            if !matches!(results.get(eid), Some(old_current) if *old_current == current) {
+                results.insert(eid.clone(), current);
 
-            results.insert(eid.clone(), current);
-
-            for (succ, _) in graph.successors(node) {
-                if !queue.contains(&succ) {
-                    queue.push_back(succ);
+                for (succ, _) in graph.successors(node) {
+                    if !queue.contains(&succ) {
+                        queue.push_back(succ);
+                    }
                 }
             }
         }

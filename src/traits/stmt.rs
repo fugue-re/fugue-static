@@ -36,6 +36,22 @@ impl StmtExt for Stmt {
     }
 }
 
+struct VisitVars<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode Var>);
+impl<'a, 'ecode, C> Visit<'ecode> for VisitVars<'a, 'ecode, C>
+where C: ValueRefCollector<'ecode, Var> {
+    fn visit_var(&mut self, var: &'ecode Var) {
+        self.0.insert_ref(var);
+    }
+}
+
+struct VisitVarsMut<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode Var>);
+impl<'a, 'ecode, C> VisitMut<'ecode> for VisitVarsMut<'a, 'ecode, C>
+where C: ValueMutCollector<'ecode, Var> {
+    fn visit_var_mut(&mut self, var: &'ecode mut Var) {
+        self.0.insert_mut(var);
+    }
+}
+
 struct VisitDefs<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode Var>);
 impl<'a, 'ecode, C> Visit<'ecode> for VisitDefs<'a, 'ecode, C>
 where C: ValueRefCollector<'ecode, Var> {
@@ -84,6 +100,16 @@ where C: ValueMutCollector<'ecode, Var> {
 }
 
 impl<'ecode> Variables<'ecode> for Stmt {
+    fn all_variables_with<C>(&'ecode self, vars: &mut C)
+    where C: ValueRefCollector<'ecode, Var> {
+        VisitVars(vars, PhantomData).visit_stmt(self)
+    }
+
+    fn all_variables_mut_with<C>(&'ecode mut self, vars: &mut C)
+    where C: ValueMutCollector<'ecode, Var> {
+        VisitVarsMut(vars, PhantomData).visit_stmt_mut(self)
+    }
+
     fn defined_variables_with<C>(&'ecode self, vars: &mut C)
     where C: ValueRefCollector<'ecode, Var> {
         VisitDefs(vars, PhantomData).visit_stmt(self)

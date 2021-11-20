@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use interval_tree::{Interval, IntervalSet};
 
@@ -119,7 +119,40 @@ impl<'a> Hash for SimpleVar<'a> {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct VarViews<'v>(BTreeMap<AddressSpaceId, Cow<'v, IntervalSet<u64>>>);
+pub struct VarView(IntervalSet<u64>);
+
+impl Deref for VarView {
+    type Target = IntervalSet<u64>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for VarView {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl VarView {
+    pub fn registers<T: Borrow<Translator>>(translator: T) -> (AddressSpaceId, VarView) {
+        let t = translator.borrow();
+        let space_id = t.manager().register_space_id();
+
+        (
+            space_id,
+            Self(IntervalSet::from_iter(
+                t.registers()
+                    .iter()
+                    .map(|((off, sz), _)| (Interval::from(*off..=(off + (*sz as u64) - 1)), ())),
+            ))
+        )
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct VarViews<'v>(BTreeMap<AddressSpaceId, Cow<'v, VarView>>);
 
 impl<'a, 'v> FromIterator<&'a Var> for VarViews<'v> {
     fn from_iter<T: IntoIterator<Item = &'a Var>>(iter: T) -> Self {
@@ -136,26 +169,22 @@ impl<'v> VarViews<'v> {
         Self::default()
     }
 
-    pub fn registers<T: Borrow<Translator>>(translator: T) -> Self {
-        let t = translator.borrow();
-        let space_id = t.manager().register_space_id();
-
+    pub fn from_space(space: AddressSpaceId, vars: &'v VarView) -> Self {
         let mut m = BTreeMap::new();
-
-        m.insert(
-            space_id,
-            Cow::Owned(IntervalSet::from_iter(
-                t.registers()
-                    .iter()
-                    .map(|((off, sz), _)| (Interval::from(*off..=(off + (*sz as u64) - 1)), ())),
-            )),
-        );
-
+        m.insert(space, Cow::Borrowed(vars));
         Self(m)
     }
 
+    pub fn registers<T: Borrow<Translator>>(translator: T) -> Self {
+        let (space, iset) = VarView::registers(translator);
+        let mut m = BTreeMap::new();
+        m.insert(space, Cow::Owned(iset));
+        Self(m)
+    }
+
+
     pub fn merge(&mut self, other: VarViews) {
-        for (spc, ivss) in other.0.into_iter() {
+        for (spc, ivss) in other.0.into_iter().filter(|(s, _)| !s.is_register()) {
             let ivsd = self.0.entry(spc).or_default();
             ivsd.to_mut().extend(ivss.iter().map(|(k, _)| (k, ())));
         }

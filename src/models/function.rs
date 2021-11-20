@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use fugue::db;
 
-use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
+use fugue::ir::il::ecode::{BranchTarget, ECode, Entity, EntityId, Location, Stmt};
 use fugue::ir::Translator;
 
 use crate::models::cfg::{BranchKind, CFG};
@@ -124,6 +124,15 @@ impl<'trans> FunctionLifter<'trans> {
         &mut self,
         f: &db::Function,
     ) -> Result<(Entity<Function>, Vec<Entity<Block>>), Error> {
+        self.from_function_with(f, |_| ())
+    }
+
+    pub fn from_function_with<F>(
+        &mut self,
+        f: &db::Function,
+        mut transform: F,
+    ) -> Result<(Entity<Function>, Vec<Entity<Block>>), Error>
+    where F: FnMut(&mut ECode) {
         let mut blocks = Vec::new();
         let mut function = Function {
             symbol: f.name().to_string(),
@@ -133,7 +142,7 @@ impl<'trans> FunctionLifter<'trans> {
         };
 
         for b in f.blocks() {
-            let blks = self.block_lifter.from_block(b)?;
+            let blks = self.block_lifter.from_block_with(b, &mut transform)?;
 
             blocks.reserve(blks.len());
             function.blocks.reserve(blks.len());

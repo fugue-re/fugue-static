@@ -15,6 +15,18 @@ pub type DefinitionMap<'ecode> = BTreeMap<SimpleVar<'ecode>, BTreeSet<Cow<'ecode
 #[derive(Default)]
 pub struct ReachingDefinitions;
 
+// We could use a fixedbitset using a mapping from entity ids -> indices
+// to avoid costly set comparions/merges.
+//
+// We can compute this by walking over G in a single forward pass and
+// inserting each EntityId into an IndexSet:
+//
+// indexmap::set::IndexSet
+//
+// We can then build a FixedBitSet of size IndexSet::len and use the
+// insertion ordering of entity ids (to get an index) in the IndexSet
+// to determine an entity's membership in the FixedBitSet.
+
 impl<'ecode, E, G> FixedPointForward<'ecode, Block, E, G, DefinitionMap<'ecode>> for ReachingDefinitions
 where E: 'ecode,
       G: AsEntityGraph<'ecode, Block, E> {

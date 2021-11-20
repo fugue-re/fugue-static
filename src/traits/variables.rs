@@ -3,6 +3,20 @@ use fugue::ir::il::ecode::Var;
 use crate::traits::{ValueRefCollector, ValueMutCollector};
 
 pub trait Variables<'ecode> {
+    fn all_variables<C>(&'ecode self) -> C
+    where C: ValueRefCollector<'ecode, Var> {
+        let mut vars = C::default();
+        self.all_variables_with(&mut vars);
+        vars
+    }
+
+    fn all_variables_mut<C>(&'ecode mut self) -> C
+    where C: ValueMutCollector<'ecode, Var> {
+        let mut vars = C::default();
+        self.all_variables_mut_with(&mut vars);
+        vars
+    }
+
     fn defined_variables<C>(&'ecode self) -> C
     where C: ValueRefCollector<'ecode, Var> {
         let mut vars = C::default();
@@ -35,6 +49,12 @@ pub trait Variables<'ecode> {
     where C: ValueRefCollector<'ecode, Var> {
         (self.defined_variables(), self.used_variables())
     }
+
+    fn all_variables_with<C>(&'ecode self, vars: &mut C)
+        where C: ValueRefCollector<'ecode, Var>;
+
+    fn all_variables_mut_with<C>(&'ecode mut self, vars: &mut C)
+        where C: ValueMutCollector<'ecode, Var>;
 
     fn defined_variables_with<C>(&'ecode self, vars: &mut C)
         where C: ValueRefCollector<'ecode, Var>;

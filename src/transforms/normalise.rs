@@ -17,14 +17,14 @@
 
 use std::borrow::Borrow;
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter::FromIterator;
 
-use fugue::ir::Translator;
-use fugue::ir::il::ecode::{Expr, Var};
+use fugue::ir::{AddressSpaceId, Translator};
+use fugue::ir::il::ecode::{ECode, Expr, Stmt, Var};
 
 use crate::models::{Block, CFG};
-use crate::types::{SimpleVar, VarViews};
+use crate::types::{SimpleVar, VarView, VarViews};
 use crate::traits::*;
 
 trait VarClass<'a> {
@@ -40,77 +40,27 @@ impl<'a, T> VarClass<'a> for T where T: 'a, &'a T: Into<SimpleVar<'a>> {
 }
 
 #[derive(Debug, Clone)]
-pub struct AliasedVars<'v> {
+pub struct VariableAliasNormaliser {
+    register_space: AddressSpaceId,
+    register_view: VarView,
+    all_vars: bool,
+}
+
+struct VariableAliasNormaliserVisitor<'v> {
     classes: VarViews<'v>,
     all_vars: bool,
 }
 
-impl<'v> From<VarViews<'v>> for AliasedVars<'v> {
-    fn from(classes: VarViews<'v>) -> Self {
+impl<'v> VariableAliasNormaliserVisitor<'v> {
+    fn new(classes: VarViews<'v>, all_vars: bool) -> Self {
         Self {
             classes,
-            all_vars: false,
+            all_vars,
         }
-    }
-}
-
-impl<'v> AliasedVars<'v> {
-    pub fn new() -> Self {
-        Self {
-            classes: VarViews::default(),
-            all_vars: false,
-        }
-    }
-
-    pub fn new_with(classes: VarViews<'v>) -> Self {
-        Self {
-            classes,
-            all_vars: false,
-        }
-    }
-
-    pub fn registers<T: Borrow<Translator>>(translator: T) -> Self {
-        Self::from(VarViews::registers(translator))
-    }
-
-    pub fn transform(&mut self, graph: &mut CFG<Block>) {
-        self.reset();
-        self.classes.merge(Self::variable_aliases(graph));
-
-        for (_, _, blk) in graph.entities_mut() {
-            let nblk = blk.to_mut();
-            for op in nblk.operations_mut() {
-                self.visit_stmt_mut(op.value_mut());
-            }
-        }
-
-        self.reset();
-    }
-
-    pub fn reset(&mut self) {
-        self.classes.reset()
-    }
-
-    pub fn all_variables(&mut self, toggle: bool) {
-        self.all_vars = toggle;
     }
 
     fn should_transform(&self, var: &Var) -> bool {
         self.all_vars || var.space().is_unique() || var.space().is_register()
-    }
-
-    /// The goal of this analysis is to minimise the number of inserted
-    /// definitions. Therefore, this function only considers aliases with
-    /// respect to the CFG being transformed.
-    fn variable_aliases(graph: &CFG<Block>) -> VarViews<'v> {
-        let mut defs = BTreeSet::new();
-        let mut uses = BTreeSet::new();
-
-        for (_, _, block) in graph.entities() {
-            block.defined_and_used_variables_with(&mut defs, &mut uses);
-        }
-
-        VarViews::from_iter(defs.union(&uses).map(|v| *v))
     }
 
     /// Assumes that svar.bits() != pvar.bits()
@@ -152,7 +102,96 @@ impl<'v> AliasedVars<'v> {
     }
 }
 
-impl<'ecode, 'v> VisitMut<'ecode> for AliasedVars<'v> {
+impl VariableAliasNormaliser {
+    pub fn new<T: Borrow<Translator>>(translator: T) -> Self {
+        let (register_space, register_view) = VarView::registers(translator);
+        Self {
+            register_space,
+            register_view,
+            all_vars: false,
+        }
+    }
+
+    fn transform_stmt(&self, stmt: &mut Stmt) {
+        let mut classes = VarViews::from_space(
+            self.register_space,
+            &self.register_view,
+        );
+
+        Self::stmt_variable_aliases(&mut classes, stmt);
+
+        let mut visitor = VariableAliasNormaliserVisitor::new(classes, self.all_vars);
+
+        visitor.visit_stmt_mut(stmt);
+    }
+
+    fn transform_ecode(&self, ecode: &mut ECode) {
+        let mut classes = VarViews::from_space(
+            self.register_space,
+            &self.register_view,
+        );
+
+        Self::ecode_variable_aliases(&mut classes, ecode);
+
+        let mut visitor = VariableAliasNormaliserVisitor::new(classes, self.all_vars);
+
+        for op in ecode.operations_mut().iter_mut() {
+            visitor.visit_stmt_mut(op);
+        }
+    }
+
+    fn transform_cfg(&self, graph: &mut CFG<Block>) {
+        let mut classes = VarViews::from_space(
+            self.register_space,
+            &self.register_view,
+        );
+
+        Self::cfg_variable_aliases(&mut classes, graph);
+
+        let mut visitor = VariableAliasNormaliserVisitor::new(classes, self.all_vars);
+
+        for (_, _, blk) in graph.entities_mut() {
+            let nblk = blk.to_mut();
+            for op in nblk.operations_mut() {
+                visitor.visit_stmt_mut(op.value_mut());
+            }
+        }
+    }
+
+    pub fn all_variables(&mut self, toggle: bool) {
+        self.all_vars = toggle;
+    }
+
+    /// The goal of this analysis is to minimise the number of inserted
+    /// definitions. Therefore, this function only considers aliases with
+    /// respect to the CFG being transformed.
+    fn cfg_variable_aliases<'v>(view: &mut VarViews<'v>, graph: &CFG<Block>) {
+        let mut vars = BTreeSet::new();
+
+        for (_, _, block) in graph.entities() {
+            block.all_variables_with(&mut vars);
+        }
+
+        view.merge(VarViews::from_iter(vars))
+    }
+
+    fn ecode_variable_aliases<'v>(view: &mut VarViews<'v>, ecode: &ECode) {
+        let mut vars = BTreeSet::new();
+
+        for op in ecode.operations().iter() {
+            op.all_variables_with(&mut vars);
+        }
+
+        view.merge(VarViews::from_iter(vars))
+    }
+
+    fn stmt_variable_aliases<'v>(view: &mut VarViews<'v>, stmt: &Stmt) {
+        let vars = stmt.all_variables::<BTreeSet<_>>();
+        view.merge(VarViews::from_iter(vars))
+    }
+}
+
+impl<'ecode, 'v> VisitMut<'ecode> for VariableAliasNormaliserVisitor<'v> {
     fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
         match expr {
             Expr::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
@@ -200,12 +239,99 @@ impl<'ecode, 'v> VisitMut<'ecode> for AliasedVars<'v> {
 }
 
 pub trait NormaliseAliases {
-    fn normalise_aliases(&mut self, aliases: &mut AliasedVars);
+    fn normalise_aliases(&mut self, n: &VariableAliasNormaliser);
+}
+
+impl NormaliseAliases for Stmt {
+    fn normalise_aliases(&mut self, n: &VariableAliasNormaliser) {
+        n.transform_stmt(self);
+    }
+}
+
+impl NormaliseAliases for ECode {
+    fn normalise_aliases(&mut self, n: &VariableAliasNormaliser) {
+        n.transform_ecode(self);
+    }
 }
 
 impl<'ecode> NormaliseAliases for CFG<'ecode, Block> {
-    fn normalise_aliases(&mut self, aliases: &mut AliasedVars) {
-        aliases.transform(self)
+    fn normalise_aliases(&mut self, n: &VariableAliasNormaliser) {
+        n.transform_cfg(self);
+    }
+}
+
+pub struct VariableNormaliser {
+    alias_normaliser: VariableAliasNormaliser,
+    unique_base: u64,
+}
+
+struct VariableNormaliserVisitor {
+    mapping: BTreeMap<u64, u64>,
+    unique_base: u64,
+}
+
+impl VariableNormaliserVisitor {
+    fn new(unique_base: u64) -> Self {
+        Self {
+            mapping: BTreeMap::new(),
+            unique_base,
+        }
+    }
+}
+
+impl<'ecode> VisitMut<'ecode> for VariableNormaliserVisitor {
+    fn visit_var_mut(&mut self, var: &'ecode mut Var) {
+        if var.space().is_unique() {
+            let mut unique_base = self.unique_base;
+            let noffset = self.mapping
+                .entry(var.offset())
+                .or_insert_with(|| {
+                    let offset = unique_base;
+                    unique_base += (var.bits() as u64) / 8;
+                    offset
+                });
+            self.unique_base = unique_base;
+            *var = Var::new(var.space(), *noffset, var.bits(), var.generation());
+        }
+    }
+}
+
+impl VariableNormaliser {
+    pub fn new<T: Borrow<Translator>>(translator: T) -> Self {
+        Self {
+            alias_normaliser: VariableAliasNormaliser::new(translator),
+            unique_base: 0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.unique_base = 0;
+    }
+
+    pub fn all_variables(&mut self, toggle: bool) {
+        self.alias_normaliser.all_variables(toggle);
+    }
+
+    fn transform_ecode(&mut self, ecode: &mut ECode) {
+        self.alias_normaliser.transform_ecode(ecode);
+
+        let mut visitor = VariableNormaliserVisitor::new(self.unique_base);
+
+        for op in ecode.operations_mut().iter_mut() {
+            visitor.visit_stmt_mut(op);
+        }
+
+        self.unique_base = visitor.unique_base;
+    }
+}
+
+pub trait NormaliseVariables {
+    fn normalise_variables(&mut self, normaliser: &mut VariableNormaliser);
+}
+
+impl NormaliseVariables for ECode {
+    fn normalise_variables(&mut self, normaliser: &mut VariableNormaliser) {
+        normaliser.transform_ecode(self);
     }
 }
 
@@ -230,8 +356,7 @@ mod test {
         translator.set_variable_default("opsize", 1);
         translator.set_variable_default("rexprefix", 0);
 
-        let base = VarViews::registers(&translator);
-        let mut defs = AliasedVars::from(base);
+        let avars = VariableAliasNormaliser::new(&translator);
 
         let rax = Var::from(*translator.register_by_name("RAX").unwrap());
         let ax = Var::from(*translator.register_by_name("AX").unwrap());
@@ -242,34 +367,24 @@ mod test {
         let is_set_exp = |stmt: &Stmt, exp| matches!(stmt, Stmt::Assign(_, e) if *e == exp);
 
         let mut s1 = Stmt::assign(ah, BitVec::from(0xffu8));
-        defs.visit_stmt_mut(&mut s1);
+        s1.normalise_aliases(&avars);
 
         assert!(is_set_var(&s1, rax) && is_set_exp(&s1, Expr::concat(Expr::extract_high(rax, 48), Expr::concat(BitVec::from(0xffu8), Expr::extract_low(rax, 8)))));
 
         let mut s2 = Stmt::assign(al, BitVec::from(0xffu8));
-        defs.visit_stmt_mut(&mut s2);
+        s2.normalise_aliases(&avars);
 
         assert!(is_set_var(&s2, rax) && is_set_exp(&s2, Expr::concat(Expr::extract_high(rax, 56), BitVec::from(0xffu8))));
 
         let mut s3 = Stmt::assign(rax, BitVec::from(0xffu64));
-        defs.visit_stmt_mut(&mut s3);
+        s3.normalise_aliases(&avars);
 
         assert!(is_set_var(&s3, rax) && is_set_exp(&s3, Expr::from(BitVec::from(0xffu64))));
 
         let mut s4 = Stmt::assign(ax, BitVec::from(0xffu16));
-        defs.visit_stmt_mut(&mut s4);
+        s4.normalise_aliases(&avars);
 
         assert!(is_set_var(&s4, rax) && is_set_exp(&s4, Expr::concat(Expr::extract_high(rax, 48), BitVec::from(0xffu16))));
-
-        let mut e1 = Expr::int_add(ax, BitVec::from(0xffu16));
-        defs.visit_expr_mut(&mut e1);
-
-        assert_eq!(e1, Expr::int_add(Expr::extract_low(rax, 16), BitVec::from(0xffu16)));
-
-        let mut e2 = Expr::int_add(ah, BitVec::from(0xffu8));
-        defs.visit_expr_mut(&mut e2);
-
-        assert_eq!(e2, Expr::int_add(Expr::extract(rax, 8, 16), BitVec::from(0xffu8)));
 
         Ok(())
     }

@@ -5,7 +5,7 @@ use fugue::db::BasicBlock;
 
 use fugue::ir::Translator;
 use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt, Var};
+use fugue::ir::il::ecode::{BranchTarget, ECode, Entity, EntityId, Location, Stmt, Var};
 
 use thiserror::Error;
 
@@ -95,6 +95,34 @@ impl Block {
 }
 
 impl<'ecode> Variables<'ecode> for Block {
+    fn all_variables_with<C>(&'ecode self, vars: &mut C)
+    where C: ValueRefCollector<'ecode, Var> {
+        for (pvar, pvars) in self.phis.iter() {
+            vars.insert_ref(pvar);
+            for pvar in pvars.iter() {
+                vars.insert_ref(pvar);
+            }
+        }
+
+        for stmt in self.operations.iter().map(|v| v.value()) {
+            stmt.all_variables_with(vars);
+        }
+    }
+
+    fn all_variables_mut_with<C>(&'ecode mut self, vars: &mut C)
+    where C: ValueMutCollector<'ecode, Var> {
+        for (pvar, pvars) in self.phis.iter_mut() {
+            vars.insert_mut(pvar);
+            for pvar in pvars.iter_mut() {
+                vars.insert_mut(pvar);
+            }
+        }
+
+        for stmt in self.operations.iter_mut().map(|v| v.value_mut()) {
+            stmt.all_variables_mut_with(vars);
+        }
+    }
+
     // i.e. all vars that are a target of an assignment
     fn defined_variables_with<C>(&'ecode self, defs: &mut C)
     where C: ValueRefCollector<'ecode, Var> {
@@ -192,6 +220,11 @@ impl<'trans> BlockLifter<'trans> {
     }
 
     pub fn from_block(&mut self, block: &BasicBlock) -> Result<Vec<Entity<Block>>, Error> {
+        self.from_block_with(block, |_| ())
+    }
+
+    pub fn from_block_with<F>(&mut self, block: &BasicBlock, mut transform: F) -> Result<Vec<Entity<Block>>, Error>
+    where F: FnMut(&mut ECode) {
         let mut offset = 0;
         let mut blocks = Vec::with_capacity(4);
 
@@ -206,6 +239,8 @@ impl<'trans> BlockLifter<'trans> {
                 &mut self.context,
                 self.translator.address(address),
                 &bytes[offset..])?;
+
+            transform(&mut ecode);
 
             // Each `ecode` block represents a single architectural
             // instruction, which may have local control-flow.

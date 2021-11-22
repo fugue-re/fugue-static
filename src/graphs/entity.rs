@@ -1,4 +1,4 @@
-use fugue::ir::il::ecode::{Entity, EntityId};
+use fugue::ir::il::ecode::{Entity, EntityId, Location};
 use fxhash::FxBuildHasher;
 
 use petgraph::algo::{has_path_connecting, kosaraju_scc, DfsSpace};
@@ -7,6 +7,7 @@ use petgraph::stable_graph::{Neighbors, StableDiGraph, WalkNeighbors};
 use petgraph::Direction;
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::ops::Deref;
 
@@ -15,9 +16,11 @@ use indexmap::map::IterMut as EntityIterMutInner;
 use crate::traits::IntoEntityRef;
 use crate::types::EntityRef;
 
+use super::algorithms::dominance::{Dominance, Dominators};
 use super::traversals::{PostOrder, RevPostOrder};
 
 type HashSet<K> = std::collections::HashSet<K, FxBuildHasher>;
+type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 type IndexMap<K, V> = indexmap::IndexMap<K, V, FxBuildHasher>;
 type IndexSet<K> = indexmap::IndexSet<K, FxBuildHasher>;
 
@@ -126,6 +129,7 @@ pub struct EntityGraph<'a, V, E> where V: Clone {
     pub(crate) entity_roots: IndexSet<(EntityId, VertexIndex<V>)>,
 
     pub(crate) entities: IndexMap<EntityId, (VertexIndex<V>, Cow<'a, Entity<V>>)>,
+    pub(crate) entity_versions: HashMap<Location, usize>,
 }
 
 impl<'a, V, E> Default for EntityGraph<'a, V, E>
@@ -138,6 +142,7 @@ where
             //entity_mapping: Default::default(),
             entity_roots: Default::default(),
             entities: Default::default(),
+            entity_versions: Default::default(),
         }
     }
 }
@@ -157,6 +162,7 @@ where
                 .iter()
                 .map(|(id, (vx, v))| (id.clone(), (*vx, Cow::Owned(v.as_ref().clone()))))
                 .collect(),
+            entity_versions: self.entity_versions.clone(),
         }
     }
 }
@@ -217,10 +223,42 @@ where
             nx.0
         } else {
             let id = er.id();
+            let loc = id.location().clone();
+            let gen = id.generation();
+
             let nx = self.entity_graph.add_node(id.clone()).into();
+
             self.entities.insert(id.clone(), (nx, er));
+
+            let ngen = self.entity_versions
+                .entry(loc)
+                .or_default();
+            *ngen = gen.max(*ngen);
+
             nx
         }
+    }
+
+    pub fn add_entity_alias<T>(&mut self, entity: T) -> VertexIndex<V>
+    where
+        T: IntoEntityRef<'a, T = V>,
+    {
+        let mut er = entity.into_entity_ref();
+
+        let loc = er.id().location().clone();
+        let ngen = self.entity_versions
+            .entry(loc)
+            .or_default();
+        *ngen += 1;
+
+        *er.to_mut().id_mut().generation_mut() = *ngen;
+
+        let id = er.id().clone();
+        let nx = self.entity_graph.add_node(id.clone()).into();
+
+        self.entities.insert(id, (nx, er));
+
+        nx
     }
 
     pub fn add_root_entity<T>(&mut self, entity: T) -> VertexIndex<V>
@@ -256,6 +294,19 @@ where
         (sid, tid)
     }
 
+    pub fn remove_relation<S, T>(&mut self, source: S, target: T) -> Option<E>
+    where
+        S: IntoEntityRef<'a, T = V>,
+        T: IntoEntityRef<'a, T = V>,
+    {
+        let sid = self.entity_vertex(source.into_entity_ref().id())?;
+        let tid = self.entity_vertex(target.into_entity_ref().id())?;
+
+        let eid = self.entity_graph.find_edge(*sid, *tid)?;
+
+        self.entity_graph.remove_edge(eid)
+    }
+
     pub fn entities<'g>(&'g self) -> EntityRefIter<'g, 'a, V, E> {
         EntityRefIter::new(self)
     }
@@ -272,6 +323,10 @@ where
         !self.entity_roots.is_empty()
     }
 
+    pub fn leaf_entities<'g>(&'g self) -> EntityRefIterFiltered<'g, 'a, V, E> {
+        EntityRefIterFiltered::new(self, |g, _, id, _| g.successors(id).next().is_none())
+    }
+
     pub fn make_root_entity(&mut self, vertex: VertexIndex<V>) {
         let id = &self.entity_graph[*vertex];
         self.entity_roots.insert((id.clone(), vertex));
@@ -286,19 +341,8 @@ where
 
         let starts = self
             .entity_graph
-            .node_indices()
-            .filter_map(|nx| -> Option<VertexIndex<V>> {
-                if self
-                    .entity_graph
-                    .neighbors_directed(nx, Direction::Incoming)
-                    .next()
-                    .is_none()
-                {
-                    Some(nx.into())
-                } else {
-                    None
-                }
-            });
+            .externals(Direction::Incoming)
+            .map(VertexIndex::from);
 
         roots.extend(starts);
 
@@ -346,6 +390,248 @@ where
 
     pub fn reverse_post_order<'g>(&'g self) -> RevPostOrderIter<'g, 'a, V, E> {
         RevPostOrderIter::new(self)
+    }
+
+    pub fn back_edges<'g>(&'g self) -> Vec<(VertexIndex<V>, VertexIndex<V>, EdgeIndex<E>)> {
+        let dominators = self.dominators();
+        self.back_edges_with(&dominators)
+    }
+
+    pub fn back_edges_with<'g>(&'g self, dominators: &Dominators<V>) -> Vec<(VertexIndex<V>, VertexIndex<V>, EdgeIndex<E>)> {
+        let mut edges = Vec::new();
+        for (_, vx, _) in self.reverse_post_order() {
+            if let Some(doms) = dominators.dominators(vx).map(|doms| doms.into_iter().collect::<HashSet<_>>()) {
+                for (succ, e) in self.successors(vx).filter(|(succ, _)| doms.contains(succ)) {
+                    edges.push((vx, succ, e))
+                }
+            }
+        }
+        edges
+    }
+
+    pub fn remove_back_edges<'g>(&'g mut self) {
+        let dominators = self.dominators();
+        self.remove_back_edges_with(&dominators)
+    }
+
+    pub fn remove_back_edges_with<'g>(&'g mut self, dominators: &Dominators<V>) {
+        for (_, _, e) in self.back_edges_with(dominators) {
+            self.entity_graph.remove_edge(*e);
+        }
+    }
+
+    pub fn natural_loops<'g>(&'g self) -> Vec<NaturalLoop<V, E>> {
+        let dominators = self.dominators();
+        self.natural_loops_with(&dominators)
+    }
+
+    pub fn natural_loops_with<'g>(&'g self, dominators: &Dominators<V>) -> Vec<NaturalLoop<V, E>> {
+        let mut loops = Vec::new();
+
+        for (n, s, e) in self.back_edges_with(dominators) {
+            loops.push(NaturalLoop::new(self, s, n, e));
+        }
+
+        loops
+    }
+
+    pub fn strongly_connected_components<'g>(&'g self) -> StronglyConnectedComponents<V> {
+        StronglyConnectedComponents(kosaraju_scc(&self.entity_graph)
+            .into_iter()
+            .map(|ccs| ccs.into_iter().map(VertexIndex::from).collect())
+            .collect())
+    }
+
+    pub fn loops<'g>(&'g self) -> Vec<Loop<V>> {
+        let sccs = self.strongly_connected_components();
+        self.loops_with(&sccs)
+    }
+
+    pub fn loops_with<'g>(&'g self, sccs: &StronglyConnectedComponents<V>) -> Vec<Loop<V>> {
+        let mut loops = Vec::new();
+        for cg in sccs.iter().filter(|cg| cg.len() > 1).cloned() {
+            let body = cg;
+            let heads = body.iter()
+                .filter_map(|v| if self.predecessors(*v).any(|(p, _)| !body.contains(&p)) {
+                    Some(*v)
+                } else {
+                    None
+                })
+                .collect();
+            let tails = body.iter()
+                .filter_map(|v| if self.successors(*v).any(|(s, _)| !body.contains(&s)) {
+                    Some(*v)
+                } else {
+                    None
+                })
+                .collect();
+            loops.push(Loop::new(heads, tails, body));
+        }
+        loops
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct StronglyConnectedComponents<V>(Vec<BTreeSet<VertexIndex<V>>>);
+
+impl<V> Deref for StronglyConnectedComponents<V> {
+    type Target = Vec<BTreeSet<VertexIndex<V>>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<V> From<StronglyConnectedComponents<V>> for Vec<BTreeSet<VertexIndex<V>>> {
+    fn from(scc: StronglyConnectedComponents<V>) -> Self {
+        scc.0
+    }
+}
+
+impl<V> StronglyConnectedComponents<V> {
+    pub fn into_inner(self) -> Vec<BTreeSet<VertexIndex<V>>> {
+        self.into()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct Loop<V> {
+    heads: BTreeSet<VertexIndex<V>>,
+    tails: BTreeSet<VertexIndex<V>>,
+    body: BTreeSet<VertexIndex<V>>,
+}
+
+impl<V> Loop<V> where V: Clone {
+    fn new(heads: BTreeSet<VertexIndex<V>>, tails: BTreeSet<VertexIndex<V>>, body: BTreeSet<VertexIndex<V>>) -> Self {
+        Self {
+            heads,
+            tails,
+            body,
+        }
+    }
+
+    /// Do `self` and `other` share the same loop header?
+    pub fn is_merged(&self, other: &Self) -> bool {
+        self.heads.union(&other.heads).next().is_some()
+    }
+
+    /// Are `self` and `other` disjoint?
+    pub fn is_disjoint(&self, other: &Self) -> bool {
+        self.heads.is_disjoint(&other.heads)
+    }
+
+    /// Is `self` contained within `other`?
+    pub fn is_nested(&self, other: &Self) -> bool {
+        self.body.is_subset(&other.body)
+    }
+
+    /// Is `self` an outer loop of `other`?
+    pub fn is_outer(&self, other: &Self) -> bool {
+        other.is_nested(self)
+    }
+
+    /// Is `self` an inner loop of `other`?
+    pub fn is_inner(&self, other: &Self) -> bool {
+        self.is_nested(other)
+    }
+
+    pub fn external_predecessors<'g, E>(&self, g: &'g EntityGraph<'_, V, E>) -> Vec<(VertexIndex<V>, VertexIndex<V>, EdgeIndex<E>)> {
+        let mut preds = Vec::new();
+        for head in self.heads.iter() {
+            preds.extend(g.predecessors(*head).filter_map(|(p, e)| if !self.body.contains(&p) {
+                Some((p, *head, e))
+            } else {
+                None
+            }));
+        }
+        preds
+    }
+
+    pub fn external_successors<'g, E>(&self, g: &'g EntityGraph<'_, V, E>) -> Vec<(VertexIndex<V>, VertexIndex<V>, EdgeIndex<E>)> {
+        let mut preds = Vec::new();
+        for head in self.heads.iter() {
+            preds.extend(g.successors(*head).filter_map(|(s, e)| if !self.body.contains(&s) {
+                Some((*head, s, e))
+            } else {
+                None
+            }));
+        }
+        preds
+    }
+
+    pub fn is_reducible(&self) -> bool {
+        self.heads.len() == 1
+    }
+
+    pub fn is_irreducible(&self) -> bool {
+        !self.is_reducible()
+    }
+
+    pub fn head(&self) -> VertexIndex<V> {
+        self.heads.iter().next().copied().unwrap()
+    }
+
+    pub fn heads(&self) -> &BTreeSet<VertexIndex<V>> {
+        &self.heads
+    }
+
+    pub fn body(&self) -> &BTreeSet<VertexIndex<V>> {
+        &self.body
+    }
+
+    pub fn tails(&self) -> &BTreeSet<VertexIndex<V>> {
+        &self.tails
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct NaturalLoop<V, E> {
+    head: VertexIndex<V>,
+    tail: VertexIndex<V>,
+    edge: EdgeIndex<E>,
+    body: BTreeSet<VertexIndex<V>>,
+}
+
+impl<V, E> NaturalLoop<V, E> where V: Clone {
+    fn new<'g>(graph: &'g EntityGraph<'_, V, E>, head: VertexIndex<V>, tail: VertexIndex<V>, edge: EdgeIndex<E>) -> Self {
+        let mut worklist = vec![tail];
+        let mut body = BTreeSet::new();
+        body.insert(head);
+
+        while let Some(v) = worklist.pop() {
+            if body.contains(&v) {
+                continue
+            }
+
+            body.insert(v);
+
+            for (p, _) in graph.predecessors(v) {
+                worklist.push(p);
+            }
+        }
+
+        Self {
+            head,
+            tail,
+            edge,
+            body,
+        }
+    }
+
+    pub fn head(&self) -> VertexIndex<V> {
+        self.head
+    }
+
+    pub fn edge(&self) -> EdgeIndex<E> {
+        self.edge
+    }
+
+    pub fn back_edge(&self) -> (VertexIndex<V>, VertexIndex<V>, EdgeIndex<E>) {
+        (self.tail, self.head, self.edge)
+    }
+
+    pub fn body(&self) -> &BTreeSet<VertexIndex<V>> {
+        &self.body
     }
 }
 
@@ -673,6 +959,51 @@ where
         self.eiter
             .next()
             .map(|(eid, (v, e))| (eid, *v, e))
+    }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.eiter.size_hint()
+    }
+}
+
+pub struct EntityRefIterFiltered<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    graph: &'g EntityGraph<'a, V, E>,
+    eiter: indexmap::map::Iter<'g, EntityId, (VertexIndex<V>, EntityRef<'a, V>)>,
+    fiter: Box<dyn Fn(&'g EntityGraph<'a, V, E>, &'g EntityId, VertexIndex<V>, &'g EntityRef<'a, V>) -> bool + 'static>,
+}
+
+impl<'g, 'a, V, E> EntityRefIterFiltered<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    fn new<F>(graph: &'g EntityGraph<'a, V, E>, filter: F) -> Self
+    where F: Fn(&'g EntityGraph<'a, V, E>, &'g EntityId, VertexIndex<V>, &'g EntityRef<'a, V>) -> bool + 'static {
+        Self {
+            graph,
+            eiter: graph.entities.iter(),
+            fiter: Box::new(filter),
+        }
+    }
+}
+
+impl<'g, 'a, V, E> Iterator for EntityRefIterFiltered<'g, 'a, V, E>
+where
+    V: Clone,
+{
+    type Item = (&'g EntityId, VertexIndex<V>, &'g EntityRef<'a, V>);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((eid, (v, e))) = self.eiter.next() {
+            if (self.fiter)(self.graph, eid, *v, e) {
+                return Some((eid, *v, e))
+            }
+        }
+        None
     }
 
     #[inline(always)]

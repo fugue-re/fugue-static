@@ -531,7 +531,7 @@ where
 
 pub trait Dominance<V, E> {
     fn dominators(&self) -> Dominators<V>;
-    fn reverse_dominators(&self) -> Dominators<V>;
+    fn post_dominators(&self) -> Dominators<V>;
 }
 
 impl<'a, V, E, G> Dominance<V, E> for G
@@ -543,7 +543,7 @@ where
         simple_fast(self.entity_graph(), false)
     }
 
-    fn reverse_dominators(&self) -> Dominators<V> {
+    fn post_dominators(&self) -> Dominators<V> {
         simple_fast(self.entity_graph(), true)
     }
 }

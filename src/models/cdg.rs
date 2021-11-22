@@ -46,7 +46,7 @@ where V: Clone,
     where G: AsEntityGraph<'a, V, E> {
         let mut graph = EntityGraph::new();
 
-        let rd = cfg.entity_graph().reverse_dominators();
+        let rd = cfg.entity_graph().post_dominators();
         let rdf = rd.dominance_frontier();
 
         for (vx, vys) in rdf.iter() {

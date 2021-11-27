@@ -18,3 +18,6 @@ pub use function::{Function, FunctionLifter};
 
 pub mod program;
 pub use program::Program;
+
+pub mod usedef;
+pub use usedef::UseDefs;

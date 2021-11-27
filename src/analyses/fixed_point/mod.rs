@@ -18,7 +18,7 @@ where V: 'a + Clone,
         let mut results = C::default();
 
         let graph = g.entity_graph();
-        let mut queue = graph.post_order().map(|(_, v, _)| v).collect::<VecDeque<_>>();
+        let mut queue = graph.post_order().into_iter().collect::<VecDeque<_>>();
 
         while let Some(node) = queue.pop_front() {
             let current_in = graph
@@ -70,7 +70,7 @@ where V: 'a + Clone,
         let mut results = C::default();
 
         let graph = g.entity_graph();
-        let mut queue = graph.reverse_post_order().map(|(_, v, _)| v).collect::<VecDeque<_>>();
+        let mut queue = graph.reverse_post_order().into_iter().collect::<VecDeque<_>>();
 
         while let Some(node) = queue.pop_front() {
             let current_in = graph

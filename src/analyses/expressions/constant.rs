@@ -2,7 +2,7 @@ use fugue::bv::BitVec;
 use fugue::ir::il::ecode::{BinOp, BinRel, Cast, Expr, Stmt, UnOp, UnRel, Var};
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 use crate::graphs::AsEntityGraphMut;
 use crate::models::block::Block;
@@ -356,9 +356,7 @@ impl<'a, 'b> ConstPropagator<'a, 'b> {
             mapping: Cow::Borrowed(&*self.mapping),
             ..Default::default()
         };
-        println!("before: {}", stmt);
         folder.visit_stmt_mut(stmt);
-        println!("after: {}", stmt);
 
         if let Stmt::Assign(ref var, Expr::Val(ref expr)) = &*stmt {
             self.mapping.to_mut().insert(*var, Cow::Owned((*expr).to_owned()));
@@ -382,7 +380,6 @@ impl<'a, 'b> ConstPropagator<'a, 'b> {
         }
 
         for op in blk.operations_mut() {
-            println!("at: {}", op.location());
             self.propagate(op.value_mut());
         }
     }
@@ -390,10 +387,10 @@ impl<'a, 'b> ConstPropagator<'a, 'b> {
     pub fn propagate_graph<'g, E, G>(&mut self, g: &mut G)
     where G: AsEntityGraphMut<'g, Block, E> {
         let graph = g.entity_graph_mut();
-        let mut rpo = graph.reverse_post_order().map(|(_, v, _)| v).collect::<VecDeque<_>>();
+        let mut po = graph.post_order();
         let mut prop = Self::default();
 
-        while let Some(vx) = rpo.pop_front() {
+        while let Some(vx) = po.pop_back() {
             let blk = graph.entity_mut(vx);
             prop.propagate_block(blk.to_mut());
         }

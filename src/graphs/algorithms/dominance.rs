@@ -124,7 +124,15 @@ impl<V> Dominators<V> {
         if self.roots.contains(&node) {
             None
         } else {
-            self.dominators.get(&node).copied()
+            let d = self.dominators.get(&node).copied();
+            d
+            /*
+            if d == Some(node) { // node dominates itself
+                None
+            } else {
+                d
+            }
+            */
         }
     }
 
@@ -195,7 +203,7 @@ where
     }
 
     if reversed {
-        for (_, d, _) in graph.entity_graph().post_order() {
+        for (_, d, _) in graph.entity_graph().estimated_post_order() {
             if !roots.contains(&d) {
                 tree_mapping.insert(d, tree.add_node(d));
             }
@@ -219,13 +227,13 @@ where
             }
         }
 
-        for (_, d, _) in graph.entity_graph().post_order() {
+        for (_, d, _) in graph.entity_graph().estimated_post_order() {
             if let Some(idom) = dominators.immediate_dominator(d) {
                 tree.add_edge(tree_mapping[&idom], tree_mapping[&d], ());
             }
         }
     } else {
-        for (_, d, _) in graph.entity_graph().reverse_post_order() {
+        for (_, d, _) in graph.entity_graph().estimated_reverse_post_order() {
             if !roots.contains(&d) {
                 tree_mapping.insert(d, tree.add_node(d));
             }
@@ -249,7 +257,7 @@ where
             }
         }
 
-        for (_, d, _) in graph.entity_graph().reverse_post_order() {
+        for (_, d, _) in graph.entity_graph().estimated_reverse_post_order() {
             if let Some(idom) = dominators.immediate_dominator(d) {
                 tree.add_edge(tree_mapping[&idom], tree_mapping[&d], ());
             }
@@ -382,13 +390,15 @@ where
                 let mut predecessors = idx_to_predecessor_vec[idx]
                     .iter()
                     .filter(|&&p| dominators[p] != UNDEFINED);
+
                 let new_idom_idx = predecessors.next().expect(
                     "Because the root is initialized to dominate itself, and is the \
                      first node in every path, there must exist a predecessor to this \
                      node that also has a dominator",
                 );
+
                 predecessors.fold(*new_idom_idx, |new_idom_idx, &predecessor_idx| {
-                    intersect(&dominators, new_idom_idx, predecessor_idx)
+                    intersect(&root_idxs, &dominators, new_idom_idx, predecessor_idx)
                 })
             };
 
@@ -412,6 +422,15 @@ where
             .enumerate()
             // here we remove the notion of a simulated root, and make any node dominated by it
             // dominate itself
+            //
+            // NOTE: it's possible that when a graph has multiple entry-points a node will be
+            // dominated by multiple entries where neither entry can be reached by the other!
+            //
+            // In this case, we can detect it, but it's unclear how to handle the situation.
+            //
+            // The current situation (choosing no root), causes an infinite loop when
+            // constructing the dominance tree/frontier.
+            //
             .map(|(idx, dom_idx)| {
                 (
                     o[idx],
@@ -431,13 +450,25 @@ where
     doms
 }
 
-fn intersect(dominators: &[usize], mut finger1: usize, mut finger2: usize) -> usize {
+fn intersect(roots: &HashSet<usize>, dominators: &[usize], mut finger1: usize, mut finger2: usize) -> usize {
     loop {
+        let r1 = roots.contains(&finger1);
+        let r2 = roots.contains(&finger2);
+
+        if r1 && r2 {
+            return finger1.max(finger2)
+        } else if r1 {
+            return finger1
+        } else if r2 {
+            return finger2
+        }
+
         match finger1.cmp(&finger2) {
             Ordering::Equal => return finger1,
             Ordering::Less => finger1 = dominators[finger1],
             Ordering::Greater => finger2 = dominators[finger2],
         }
+
     }
 }
 
@@ -478,10 +509,10 @@ where
     V: Clone + 'a,
     G: AsEntityGraph<'a, V, E>,
 {
-    let mut po = graph.entity_graph().post_order();
+    let mut po = graph.entity_graph().estimated_post_order();
     let mut predecessor_sets = HashMap::new();
 
-    let mut nodes = Vec::with_capacity(po.size_hint().0);
+    let mut nodes = Vec::with_capacity(graph.entity_graph().vertex_count());
 
     for (_, node, _) in &mut po {
         for (successor, _) in graph.entity_graph().successors(node) {
@@ -509,10 +540,10 @@ where
     V: Clone + 'a,
     G: AsEntityGraph<'a, V, E>,
 {
-    let mut rpo = graph.entity_graph().reverse_post_order();
+    let mut rpo = graph.entity_graph().estimated_reverse_post_order();
     let mut predecessor_sets = HashMap::new();
 
-    let mut nodes = Vec::with_capacity(rpo.size_hint().0);
+    let mut nodes = Vec::with_capacity(graph.entity_graph().vertex_count());
 
     for (_, node, _) in &mut rpo {
         for (successor, _) in graph.entity_graph().predecessors(node) {

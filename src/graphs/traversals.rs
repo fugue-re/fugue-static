@@ -1,23 +1,7 @@
-pub mod po;
-pub use po::PostOrder;
+// uses specified entry-points to perform traversal
+pub mod simple;
 
-pub mod rpo;
-pub use rpo::RevPostOrder;
+// computes entry/exits using heuristics while performing traversal
+pub mod heuristic;
 
-/*
-use petgraph::graph::NodeIndex;
-
-use std::collections::VecDeque;
-
-use crate::types::AsEntityGraph;
-
-pub trait Traversal<'a> {
-    fn into_queue_with_roots<G>(graph: G) -> (Vec<NodeIndex>, VecDeque<NodeIndex>)
-        where G: AsEntityGraph + 'a;
-
-    fn into_queue<G>(graph: G) -> VecDeque<NodeIndex>
-        where G: AsEntityGraph + 'a {
-        Self::into_queue_with_roots(graph).1
-    }
-}
-*/
+pub use simple::{PostOrder, RevPostOrder};

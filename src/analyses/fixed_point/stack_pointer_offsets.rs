@@ -29,7 +29,9 @@ impl Display for StackPointerShift {
             Self::Bottom => write!(f, "⊥"),
             Self::Shift(ref bv) => {
                 let nv = bv.clone().signed();
-                write!(f, "SP{}{}", if nv.is_negative() { "" } else { "+" }, nv)
+                let sig = if nv.is_negative() { "-" } else { "+" };
+                let abs = nv.abs();
+                write!(f, "SP{}{}", sig, abs)
             }
         }
     }

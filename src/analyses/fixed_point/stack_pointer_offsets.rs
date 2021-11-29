@@ -1,8 +1,11 @@
 use fugue::bv::BitVec;
 use fugue::ir::il::ecode::{Location, Stmt, Var};
+use fugue::ir::Translator;
 
+use std::borrow::Borrow;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
+use std::fmt::{self, Display};
 
 use crate::analyses::expressions::constant::ConstExpr;
 use crate::analyses::fixed_point::FixedPointForward;
@@ -17,6 +20,19 @@ pub enum StackPointerShift {
     Top,
     Shift(BitVec),
     Bottom,
+}
+
+impl Display for StackPointerShift {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Top => write!(f, "⊤"),
+            Self::Bottom => write!(f, "⊥"),
+            Self::Shift(ref bv) => {
+                let nv = bv.clone().signed();
+                write!(f, "SP{}{}", if nv.is_negative() { "" } else { "+" }, nv)
+            }
+        }
+    }
 }
 
 impl StackPointerShift {
@@ -54,12 +70,42 @@ pub struct StackPointerBlockShift {
     finish: StackPointerShift,
 }
 
-pub struct StackPointerOffset {
-    sp: Var,
-    roots: BTreeSet<Location>
+impl Display for StackPointerBlockShift {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "start: {}, finish: {}", self.start, self.finish)
+    }
 }
 
-impl<'ecode> FixedPointForward<'ecode, Block, BranchKind, CFG<'ecode, Block>, StackPointerBlockShift>
+pub struct StackPointerOffset {
+    sp: Var,
+    roots: BTreeSet<Location>,
+}
+
+impl StackPointerOffset {
+    pub fn new<'ecode, T: Borrow<Translator>>(trans: T, cfg: &CFG<'ecode, Block>) -> Self {
+        let trans = trans.borrow();
+
+        // We assume all conventions will use the same SP
+        // so we just take the first one. This seems like
+        // it should be a pretty safe assumption?
+
+        let conv = trans.compiler_conventions().values().next().unwrap();
+        let sp = Var::from(*conv.stack_pointer().varnode());
+
+        Self {
+            sp,
+            roots: cfg
+                .root_entities()
+                .into_iter()
+                .map(|(_, _, b)| b.location())
+                .cloned()
+                .collect(),
+        }
+    }
+}
+
+impl<'ecode>
+    FixedPointForward<'ecode, Block, BranchKind, CFG<'ecode, Block>, StackPointerBlockShift>
     for StackPointerOffset
 {
     type Err = Infallible;

@@ -1,5 +1,6 @@
-use fugue::ir::il::ecode::Var;
+use fugue::ir::il::ecode::{Expr, Stmt, Var};
 
+use crate::traits::VisitMut;
 use crate::traits::{ValueRefCollector, ValueMutCollector};
 
 pub trait Variables<'ecode> {
@@ -76,4 +77,62 @@ pub trait Variables<'ecode> {
 
     fn defined_and_used_variables_mut_with<C>(&'ecode mut self, defs: &mut C, uses: &mut C)
         where C: ValueMutCollector<'ecode, Var>;
+}
+
+pub trait Substitution {
+    fn rename(&mut self, var: &Var) -> Option<Var>;
+    fn replace(&mut self, var: &Var) -> Option<Expr>;
+}
+
+impl<'ecode, T> VisitMut<'ecode> for T where T: Substitution {
+    fn visit_var_mut(&mut self, var: &'ecode mut Var) {
+        if let Some(nvar) = self.rename(&*var) {
+            *var = nvar;
+        }
+    }
+    
+    fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
+        match expr {
+            Expr::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
+            Expr::UnOp(op, ref mut expr) => self.visit_expr_unop_mut(*op, expr),
+            Expr::BinRel(op, ref mut lexpr, ref mut rexpr) => {
+                self.visit_expr_binrel_mut(*op, lexpr, rexpr)
+            }
+            Expr::BinOp(op, ref mut lexpr, ref mut rexpr) => {
+                self.visit_expr_binop_mut(*op, lexpr, rexpr)
+            }
+            Expr::Cast(ref mut expr, ref mut cast) => self.visit_expr_cast_mut(expr, cast),
+            Expr::Load(ref mut expr, size, space) => {
+                self.visit_expr_load_mut(expr, *size, *space)
+            }
+            Expr::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
+            Expr::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
+            Expr::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
+            Expr::Intrinsic(ref name, ref mut args, bits) => {
+                self.visit_expr_intrinsic_mut(name, args, *bits)
+            }
+            Expr::Val(ref mut bv) => self.visit_expr_val_mut(bv),
+            Expr::Var(ref mut var) => if let Some(nexpr) = self.replace(&*var) {
+                *expr = nexpr;
+            } else {
+                self.visit_expr_var_mut(var)
+            }
+        }
+    }
+}
+
+pub struct Substitutor<T: Substitution>(T);
+
+impl<T: Substitution> Substitutor<T> {
+    pub fn new(subst: T) -> Self {
+        Self(subst)
+    }
+    
+    pub fn apply_stmt<'ecode>(&mut self, stmt: &'ecode mut Stmt) {
+        self.0.visit_stmt_mut(stmt);
+    } 
+    
+    pub fn apply_expr<'ecode>(&mut self, expr: &'ecode mut Expr) {
+        self.0.visit_expr_mut(expr)
+    }
 }

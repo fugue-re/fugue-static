@@ -183,7 +183,9 @@ where
     }
 
     pub fn subgraph<'g, I, E2, F>(&'g self, vertices: I) -> EntityGraph<'g, V, E>
-    where I: IntoIterator<Item=VertexIndex<V>> {
+    where
+        I: IntoIterator<Item = VertexIndex<V>>,
+    {
         self.subgraph_with(vertices, |_ex, e| e.clone())
     }
 }
@@ -192,33 +194,58 @@ impl<'a, V, E> EntityGraph<'a, V, E>
 where
     V: Clone,
 {
-    pub fn subgraph_with<'g, I, E2, F>(&'g self, vertices: I, mut edge_map: F) -> EntityGraph<'g, V, E2>
-    where I: IntoIterator<Item=VertexIndex<V>>,
-          F: FnMut(EdgeIndex<E>, &'g E) -> E2 {
+    pub fn subgraph_with<'g, I, E2, F>(
+        &'g self,
+        vertices: I,
+        mut edge_map: F,
+    ) -> EntityGraph<'g, V, E2>
+    where
+        I: IntoIterator<Item = VertexIndex<V>>,
+        F: FnMut(EdgeIndex<E>, &'g E) -> E2,
+    {
         let retained = vertices.into_iter().collect::<BTreeSet<_>>();
         EntityGraph {
-            entity_graph: self.entity_graph
-                .filter_map(
-                    |nx, e| if retained.contains(&VertexIndex::from(nx)) { Some(e.clone()) } else { None },
-                    |ex, e| Some(edge_map(EdgeIndex::from(ex), e)),
-                ),
-            entity_roots: self.entity_roots.iter()
-                .filter_map(|(e, v)| if retained.contains(v) {
-                    Some((e.clone(), *v))
-                } else {
-                    None
-                }).collect(),
-            entity_leaves: self.entity_leaves.iter()
-                .filter_map(|(e, v)| if retained.contains(v) {
-                    Some((e.clone(), *v))
-                } else {
-                    None
-                }).collect(),
-            entities: self.entities.iter()
-                .filter_map(|(id, (vx, e))| if retained.contains(vx) {
-                    Some((id.clone(), (*vx, Cow::Borrowed(e.as_ref()))))
-                } else {
-                    None
+            entity_graph: self.entity_graph.filter_map(
+                |nx, e| {
+                    if retained.contains(&VertexIndex::from(nx)) {
+                        Some(e.clone())
+                    } else {
+                        None
+                    }
+                },
+                |ex, e| Some(edge_map(EdgeIndex::from(ex), e)),
+            ),
+            entity_roots: self
+                .entity_roots
+                .iter()
+                .filter_map(|(e, v)| {
+                    if retained.contains(v) {
+                        Some((e.clone(), *v))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            entity_leaves: self
+                .entity_leaves
+                .iter()
+                .filter_map(|(e, v)| {
+                    if retained.contains(v) {
+                        Some((e.clone(), *v))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            entities: self
+                .entities
+                .iter()
+                .filter_map(|(id, (vx, e))| {
+                    if retained.contains(vx) {
+                        Some((id.clone(), (*vx, Cow::Borrowed(e.as_ref()))))
+                    } else {
+                        None
+                    }
                 })
                 .collect(),
             entity_versions: self.entity_versions.clone(), // TODO: only keep relevant
@@ -226,7 +253,9 @@ where
     }
 
     pub fn subgraph_view<'g, I>(&'g self, vertices: I) -> EntityGraph<'g, V, ()>
-    where I: IntoIterator<Item=VertexIndex<V>> {
+    where
+        I: IntoIterator<Item = VertexIndex<V>>,
+    {
         self.subgraph_with(vertices, |_ex, _e| ())
     }
 
@@ -442,10 +471,12 @@ where
     pub fn estimate_leaf_vertices<'g>(&'g self) -> Vec<VertexIndex<V>> {
         self.entity_graph
             .node_indices()
-            .filter_map(|nx| if self.successors(nx.into()).next().is_none() {
-                Some(nx.into())
-            } else {
-                None
+            .filter_map(|nx| {
+                if self.successors(nx.into()).next().is_none() {
+                    Some(nx.into())
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -604,7 +635,7 @@ where
         for (s, t, e) in self.back_edges().into_iter() {
             let nl = NaturalLoop::new(self, t, s, e);
             if nl.body().len() == covered {
-                return vec![Loop::from(nl)]
+                return vec![Loop::from(nl)];
             }
             back_edges.insert((s, t), e);
         }
@@ -612,60 +643,83 @@ where
         // TODO: remove SCCs that are not loops
         let sccs = self.strongly_connected_components();
 
-        sccs.into_inner().into_iter().map(|body| {
-            let body = body.into_iter().collect::<BTreeSet<_>>();
-            let heads = body.iter().filter_map(|v| {
-                if self.predecessors(*v).any(|(p, _)| !body.contains(&p) || back_edges.contains_key(&(p, *v))) {
-                    Some(*v)
-                } else {
-                    None
-                }
+        sccs.into_inner()
+            .into_iter()
+            .map(|body| {
+                let body = body.into_iter().collect::<BTreeSet<_>>();
+                let heads =
+                    body.iter()
+                        .filter_map(|v| {
+                            if self.predecessors(*v).any(|(p, _)| {
+                                !body.contains(&p) || back_edges.contains_key(&(p, *v))
+                            }) {
+                                Some(*v)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<BTreeSet<_>>();
+
+                let h = &heads;
+                let back_edges = body
+                    .iter()
+                    .flat_map(|v| {
+                        self.successors(*v).filter_map(move |(s, e)| {
+                            if h.contains(&s) {
+                                Some((*v, s, e))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+                Loop::new(heads, back_edges, body)
             })
-            .collect::<BTreeSet<_>>();
-
-            let h = &heads;
-            let back_edges = body.iter()
-                .flat_map(|v| self.successors(*v).filter_map(move |(s, e)| if h.contains(&s) {
-                    Some((*v, s, e))
-                } else {
-                    None
-                }))
-                .collect();
-
-            Loop::new(heads, back_edges, body)
-        })
-        .collect()
+            .collect()
     }
 
     pub fn simple_loops<'g>(&'g self) -> Vec<Loop<V, E>> {
         let (_, cycles) = self.topological_simple_cycles(false);
-        let back_edges = self.back_edges()
+        let back_edges = self
+            .back_edges()
             .into_iter()
             .map(|(s, t, e)| ((s, t), e))
             .collect::<BTreeMap<_, _>>();
 
-        cycles.into_iter().map(|body| {
-            let heads = body.iter().filter_map(|v| {
-                if self.predecessors(*v).any(|(p, _)| !body.contains(&p) || back_edges.contains_key(&(p, *v))) {
-                    Some(*v)
-                } else {
-                    None
-                }
+        cycles
+            .into_iter()
+            .map(|body| {
+                let heads =
+                    body.iter()
+                        .filter_map(|v| {
+                            if self.predecessors(*v).any(|(p, _)| {
+                                !body.contains(&p) || back_edges.contains_key(&(p, *v))
+                            }) {
+                                Some(*v)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<BTreeSet<_>>();
+
+                let h = &heads;
+                let back_edges = body
+                    .iter()
+                    .flat_map(|v| {
+                        self.successors(*v).filter_map(move |(s, e)| {
+                            if h.contains(&s) {
+                                Some((*v, s, e))
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+                Loop::new(heads, back_edges, body.into_body())
             })
-            .collect::<BTreeSet<_>>();
-
-            let h = &heads;
-            let back_edges = body.iter()
-                .flat_map(|v| self.successors(*v).filter_map(move |(s, e)| if h.contains(&s) {
-                    Some((*v, s, e))
-                } else {
-                    None
-                }))
-                .collect();
-
-            Loop::new(heads, back_edges, body.into_body())
-        })
-        .collect()
+            .collect()
     }
 
     /*
@@ -807,7 +861,8 @@ where
                 // transform back-edge
                 if let Some(ptail) = ptail {
                     let edge = oedges[&l.edge()].clone();
-                    self.entity_graph.add_edge(*ptail, *mapping[&l.head()], edge);
+                    self.entity_graph
+                        .add_edge(*ptail, *mapping[&l.head()], edge);
                 }
 
                 ptail = Some(mapping[&l.tail()]);
@@ -900,14 +955,14 @@ where
                     // transform back-edge
                     if let Some(ptail) = ptail {
                         let edge = oedges[&nl.edge()].clone();
-                        self.entity_graph.add_edge(*ptail, *mapping[&nl.head()], edge);
+                        self.entity_graph
+                            .add_edge(*ptail, *mapping[&nl.head()], edge);
                     }
 
                     ptail = Some(mapping[&nl.tail()]);
 
                     mapping.clear();
                 }
-
             }
 
             // add external predecessors
@@ -952,12 +1007,15 @@ impl<V> StronglyConnectedComponents<V> {
         self.into()
     }
 
-    pub fn into_iter(self) -> impl IntoIterator<Item=Vec<VertexIndex<V>>> {
+    pub fn into_iter(self) -> impl IntoIterator<Item = Vec<VertexIndex<V>>> {
         self.0.into_iter()
     }
 }
 
-impl<V, E> From<NaturalLoop<V, E>> for Loop<V, E> where V: Clone {
+impl<V, E> From<NaturalLoop<V, E>> for Loop<V, E>
+where
+    V: Clone,
+{
     fn from(nl: NaturalLoop<V, E>) -> Self {
         let mut heads = BTreeSet::new();
         heads.insert(nl.head);
@@ -985,7 +1043,11 @@ where
         back_edges: Vec<(VertexIndex<V>, VertexIndex<V>, EdgeIndex<E>)>,
         body: BTreeSet<VertexIndex<V>>,
     ) -> Self {
-        Self { heads, back_edges, body }
+        Self {
+            heads,
+            back_edges,
+            body,
+        }
     }
 
     /// Do `self` and `other` share the same loop header?
@@ -1073,7 +1135,8 @@ where
 
     pub fn natural_loops<'g>(&self, g: &'g EntityGraph<V, E>) -> Vec<NaturalLoop<V, E>> {
         if self.is_reducible() {
-            self.back_edges.iter()
+            self.back_edges
+                .iter()
                 .map(|(t, h, e)| NaturalLoop {
                     head: *h,
                     tail: *t,
@@ -1088,7 +1151,10 @@ where
             for head in self.heads() {
                 // find all edges originating from inside the loop body back to head; treat as back-edges
                 for node in self.body().iter() {
-                    if let Some(e) = g.successors(*node).find_map(|(s, e)| if s == *head { Some(e) } else { None }) {
+                    if let Some(e) =
+                        g.successors(*node)
+                            .find_map(|(s, e)| if s == *head { Some(e) } else { None })
+                    {
                         loops.push(NaturalLoop {
                             head: *head,
                             tail: *node,
@@ -1170,28 +1236,30 @@ where
         &self,
         g: &'g EntityGraph<'_, V, E>,
     ) -> Vec<(VertexIndex<V>, VertexIndex<V>, EdgeIndex<E>)> {
-        g.predecessors(self.head).filter_map(|(p, e)| {
-            if !self.body.contains(&p) {
-                Some((p, self.head, e))
-            } else {
-                None
-            }
-        })
-        .collect()
+        g.predecessors(self.head)
+            .filter_map(|(p, e)| {
+                if !self.body.contains(&p) {
+                    Some((p, self.head, e))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn external_successors<'g>(
         &self,
         g: &'g EntityGraph<'_, V, E>,
     ) -> Vec<(VertexIndex<V>, VertexIndex<V>, EdgeIndex<E>)> {
-        g.successors(self.head).filter_map(|(s, e)| {
-            if !self.body.contains(&s) {
-                Some((self.head, s, e))
-            } else {
-                None
-            }
-        })
-        .collect()
+        g.successors(self.head)
+            .filter_map(|(s, e)| {
+                if !self.body.contains(&s) {
+                    Some((self.head, s, e))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 }
 
@@ -1327,9 +1395,7 @@ where
     V: Clone,
 {
     pub fn next(&mut self, graph: &EntityGraph<V, E>) -> Option<VertexIndex<V>> {
-        self.traverse
-            .next(&graph)
-            .map(VertexIndex::from)
+        self.traverse.next(&graph).map(VertexIndex::from)
     }
 
     pub fn starting_vertices(self) -> Vec<VertexIndex<V>> {
@@ -1431,8 +1497,7 @@ where
     V: Clone,
 {
     pub fn next(&mut self, graph: &EntityGraph<V, E>) -> Option<VertexIndex<V>> {
-        self.traverse
-            .next(&graph)
+        self.traverse.next(&graph)
     }
 
     pub fn terminal_vertices(self) -> Vec<VertexIndex<V>> {
@@ -1736,8 +1801,8 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use fugue::ir::{AddressSpace, AddressValue};
     use crate::visualise::AsDot;
+    use fugue::ir::{AddressSpace, AddressValue};
 
     #[test]
     fn loop_sccs() {
@@ -1807,7 +1872,10 @@ mod test {
         graph.add_relation(&f, &g, ());
         graph.add_relation(&g, &f, ());
 
-        println!("{}", graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned()));
+        println!(
+            "{}",
+            graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned())
+        );
 
         let nloops = graph.natural_loops();
         if let Some(l) = nloops.iter().max_by_key(|l| l.body().len()) {
@@ -1820,7 +1888,10 @@ mod test {
         // outer loops is: SCC or G as a natural loop
 
         // deal with "complex" natural loop
-        println!("{}", graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned()));
+        println!(
+            "{}",
+            graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned())
+        );
 
         loop {
             println!("finding loops...");
@@ -1830,13 +1901,19 @@ mod test {
                 println!("loop is reducible: {}", l.is_reducible());
                 graph.unroll_loop(&l, 2);
                 println!("unroll: {:?}", l);
-                println!("{}", graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned()));
+                println!(
+                    "{}",
+                    graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned())
+                );
             } else {
-                break
+                break;
             }
         }
 
-        println!("{}", graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned()));
+        println!(
+            "{}",
+            graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned())
+        );
     }
 
     #[test]
@@ -1861,7 +1938,6 @@ mod test {
         graph.add_relation(&a, &b, ());
         graph.add_relation(&a, &c, ());
 
-        //graph.add_relation(&b, &a, ());
         graph.add_relation(&b, &c, ());
 
         graph.add_relation(&b, &d, ());
@@ -1876,7 +1952,10 @@ mod test {
         graph.add_relation(&f, &g, ());
         graph.add_relation(&g, &f, ());
 
-        println!("{}", graph.dot_with(|_nx, e| e.to_string(), |_| "".to_owned()));
+        println!(
+            "{}",
+            graph.dot_with(|_nx, e| e.to_string(), |_| "".to_owned())
+        );
 
         /*
         let mut unroll = true;
@@ -1894,11 +1973,8 @@ mod test {
             println!("loop (reducible: {}): {{", l.is_reducible());
             for v in l.body() {
                 println!("\t{}", graph.entity(*v).value());
-
             }
             println!("}}");
         }
-
-        //println!("{}", graph.dot_with(|e, v| format!("id: {}, val: {}", e, v), |_| "".to_owned()));
     }
 }

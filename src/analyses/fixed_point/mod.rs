@@ -3,6 +3,8 @@ use std::collections::VecDeque;
 use crate::graphs::entity::AsEntityGraph;
 use crate::traits::collect::EntityValueCollector;
 
+pub mod stack_pointer_offsets;
+
 pub trait FixedPointBackward<'a, V, E, G, O>
 where V: 'a + Clone,
       E: 'a,

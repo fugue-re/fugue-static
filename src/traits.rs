@@ -11,7 +11,7 @@ pub mod entity;
 pub use entity::IntoEntityRef;
 
 pub mod variables;
-pub use variables::Variables;
+pub use variables::{Substitution, Substitutor, Variables};
 
 pub mod visitor;
 pub use visitor::Visit;

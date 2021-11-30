@@ -1,6 +1,6 @@
 [package]
 name = "fugue-static"
-version = "0.2.25"
+version = "0.2.29"
 authors = ["Sam Thomas <st@xv.ax>"]
 edition = "2018"
 
@@ -13,7 +13,7 @@ fxhash = "0.2"
 itertools = "0.10"
 interval-tree = { version = "0.1", registry = "fugue" }
 fixedbitset = "0.4"
-fugue = { path = "../fugue-core/fugue-core", version = "0.2", registry = "fugue" }
+fugue = { version = "0.2", registry = "fugue" }
 petgraph = "0.6"
 simhash = { version = "0.1", registry = "fugue" }
 serde = { version = "1", features = ["derive"] }

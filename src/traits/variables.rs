@@ -2,6 +2,7 @@ use fugue::ir::il::ecode::{Expr, Stmt, Var};
 
 use crate::traits::VisitMut;
 use crate::traits::{ValueRefCollector, ValueMutCollector};
+use crate::types::SimpleVar;
 
 pub trait Variables<'ecode> {
     fn all_variables<C>(&'ecode self) -> C
@@ -80,8 +81,15 @@ pub trait Variables<'ecode> {
 }
 
 pub trait Substitution {
-    fn rename(&mut self, var: &Var) -> Option<Var>;
-    fn replace(&mut self, var: &Var) -> Option<Expr>;
+    #[allow(unused_variables)]
+    fn rename(&mut self, var: &Var) -> Option<Var> {
+        None
+    }
+
+    #[allow(unused_variables)]
+    fn replace(&mut self, var: &Var) -> Option<Expr> {
+        None
+    }
 }
 
 impl<'ecode, T> VisitMut<'ecode> for T where T: Substitution {
@@ -90,7 +98,7 @@ impl<'ecode, T> VisitMut<'ecode> for T where T: Substitution {
             *var = nvar;
         }
     }
-    
+
     fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
         match expr {
             Expr::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
@@ -127,12 +135,36 @@ impl<T: Substitution> Substitutor<T> {
     pub fn new(subst: T) -> Self {
         Self(subst)
     }
-    
+
     pub fn apply_stmt<'ecode>(&mut self, stmt: &'ecode mut Stmt) {
         self.0.visit_stmt_mut(stmt);
-    } 
-    
+    }
+
     pub fn apply_expr<'ecode>(&mut self, expr: &'ecode mut Expr) {
         self.0.visit_expr_mut(expr)
+    }
+}
+
+pub struct SimpleVarSubst<'a> {
+    var: SimpleVar<'a>,
+    expr: Expr,
+}
+
+impl<'a> SimpleVarSubst<'a> {
+    pub fn new(var: &'a Var, expr: Expr) -> Self {
+        Self {
+            var: SimpleVar::from(var),
+            expr,
+        }
+    }
+}
+
+impl<'a> Substitution for SimpleVarSubst<'a> {
+    fn replace(&mut self, var: &Var) -> Option<Expr> {
+        if SimpleVar::from(var) == self.var {
+            Some(self.expr.clone())
+        } else {
+            None
+        }
     }
 }

@@ -9,8 +9,8 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::models::Block;
-use crate::models::{Function, FunctionLifter};
+use crate::models::{Block, BlockMapping};
+use crate::models::{Function, FunctionLifter, FunctionMapping};
 use crate::models::{CFG, CG};
 use crate::transforms::normalise::{NormaliseVariables, VariableNormaliser};
 use crate::types::EntityMap;
@@ -96,14 +96,6 @@ impl<'db> Program<'db> {
         &self.translator
     }
 
-    pub fn blocks(&self) -> &EntityMap<Block> {
-        &self.blocks
-    }
-
-    pub fn blocks_mut(&mut self) -> &mut EntityMap<Block> {
-        &mut self.blocks
-    }
-
     pub fn function_by_address<A: IntoAddress>(&self, address: A) -> Option<&Entity<Function>> {
         let address = address.into_address_value(self.translator.manager().default_space_ref());
         let location = Location::new(address, 0);
@@ -117,14 +109,6 @@ impl<'db> Program<'db> {
         self.functions_by_symbol
             .get(symbol.as_ref())
             .and_then(|id| self.functions.get(id))
-    }
-
-    pub fn functions(&self) -> &EntityMap<Function> {
-        &self.functions
-    }
-
-    pub fn functions_mut(&mut self) -> &mut EntityMap<Function> {
-        &mut self.functions
     }
 
     pub fn cg(&self) -> CG {
@@ -183,6 +167,26 @@ impl<'db> Program<'db> {
             }
         }
         icfg
+    }
+}
+
+impl<'db> BlockMapping for Program<'db> {
+    fn blocks(&self) -> &EntityMap<Block> {
+        &self.blocks
+    }
+
+    fn blocks_mut(&mut self) -> &mut EntityMap<Block> {
+        &mut self.blocks
+    }
+}
+
+impl<'db> FunctionMapping for Program<'db> {
+    fn functions(&self) -> &EntityMap<Function> {
+        &self.functions
+    }
+
+    fn functions_mut(&mut self) -> &mut EntityMap<Function> {
+        &mut self.functions
     }
 }
 

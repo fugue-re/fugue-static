@@ -2,12 +2,14 @@ use std::collections::{HashMap, HashSet};
 
 use fugue::db;
 
-use fugue::ir::il::ecode::{BranchTarget, ECode, Entity, EntityId, Location, Stmt};
 use fugue::ir::Translator;
+use fugue::ir::disassembly::ContextDatabase;
+use fugue::ir::il::ecode::{BranchTarget, ECode, Entity, EntityId, Location, Stmt};
 
 use crate::models::cfg::{BranchKind, CFG};
-use crate::models::{Block, BlockLifter, Program};
+use crate::models::{Block, BlockLifter, BlockMapping};
 use crate::traits::StmtExt;
+use crate::types::EntityMap;
 
 use thiserror::Error;
 
@@ -23,6 +25,21 @@ pub struct Function {
     location: Location,
     blocks: HashSet<EntityId>,
     callers: HashMap<EntityId, EntityId>,
+}
+
+pub trait FunctionMapping {
+    fn functions(&self) -> &EntityMap<Function>;
+    fn functions_mut(&mut self) -> &mut EntityMap<Function>;
+}
+
+impl FunctionMapping for EntityMap<Function> {
+    fn functions(&self) -> &EntityMap<Function> {
+        self
+    }
+
+    fn functions_mut(&mut self) -> &mut EntityMap<Function> {
+        self
+    }
 }
 
 impl Function {
@@ -50,10 +67,10 @@ impl Function {
         &mut self.callers
     }
 
-    pub fn cfg<'db>(&self, program: &'db Program) -> CFG<'db, Block> {
+    pub fn cfg<'db, M: BlockMapping>(&self, mapping: &'db M) -> CFG<'db, Block> {
         let mut cfg = CFG::new();
 
-        let blks = program.blocks();
+        let blks = mapping.blocks();
         for blkid in self.blocks.iter() {
             let blk = &blks[blkid];
             if blk.location() == self.location() {
@@ -102,6 +119,71 @@ impl Function {
         }
 
         cfg
+    }
+}
+
+pub struct FunctionBuilder<'trans> {
+    translator: &'trans Translator,
+    context_db: ContextDatabase,
+    symbol: String,
+    address: u64,
+    block_indices: Vec<usize>,
+    blocks: Vec<Entity<Block>>,
+}
+
+impl<'trans> FunctionBuilder<'trans> {
+    pub fn new(translator: &'trans Translator, address: u64, symbol: impl Into<String>) -> Self {
+        Self {
+            translator,
+            context_db: translator.context_database(),
+            symbol: symbol.into(),
+            address,
+            block_indices: Vec::new(),
+            blocks: Vec::new(),
+        }
+    }
+
+    pub fn add_block(&mut self, address: u64, bytes: &[u8]) -> Result<usize, Error> {
+        self.add_block_with(address, bytes, |_| ())
+    }
+
+    pub fn add_block_with<F>(&mut self, address: u64, bytes: &[u8], transform: F) -> Result<usize, Error>
+    where F: FnMut(&mut ECode) {
+        let id = self.block_indices.len();
+        let rid = self.blocks.len();
+        self.blocks.extend(Block::new_with(&self.translator, &mut self.context_db, address, bytes, transform)?);
+        self.block_indices.push(rid);
+        Ok(id)
+    }
+
+    pub fn block(&self, id: usize) -> Option<&[Entity<Block>]> {
+        let sid = self.block_indices.get(id)?;
+        if let Some(eid) = self.block_indices.get(id + 1) {
+            Some(&self.blocks[*sid..*eid])
+        } else {
+            Some(&self.blocks[*sid..])
+        }
+    }
+
+    pub fn block_mut(&mut self, id: usize) -> Option<&mut [Entity<Block>]> {
+        let sid = self.block_indices.get(id)?;
+        if let Some(eid) = self.block_indices.get(id + 1) {
+            Some(&mut self.blocks[*sid..*eid])
+        } else {
+            Some(&mut self.blocks[*sid..])
+        }
+    }
+
+    pub fn build(self) -> (Entity<Function>, Vec<Entity<Block>>) {
+        let f = Function {
+            symbol: self.symbol,
+            location: Location::new(self.translator.address(self.address), 0),
+            blocks: self.blocks.iter().map(|blk| blk.id().clone()).collect(),
+            callers: HashMap::default(),
+        };
+        let blocks = self.blocks;
+
+        (Entity::new("fcn", f.location.clone(), f), blocks)
     }
 }
 

@@ -53,6 +53,13 @@ impl StackPointerShift {
     fn join(self, other: &Self) -> Self {
         match (self, other) {
             (Self::Top, _) | (_, Self::Top) => Self::Top,
+            (Self::Shift(bv1), Self::Shift(ref bv2)) => {
+                if bv1 == *bv2 {
+                    Self::Shift(bv1)
+                } else {
+                    Self::Top
+                }
+            }
             (_, Self::Shift(ref bv)) => Self::Shift(bv.clone()),
             (Self::Shift(bv), _) => Self::Shift(bv),
             (slf, _) => slf,
@@ -115,12 +122,12 @@ impl<'ecode>
     fn join(
         &mut self,
         current: StackPointerBlockShift,
-        next: &StackPointerBlockShift,
+        prev: &StackPointerBlockShift,
     ) -> Result<StackPointerBlockShift, Self::Err> {
-        let current = current.start.join(&next.finish);
+        let start = current.start.join(&prev.finish);
         Ok(StackPointerBlockShift {
-            start: current.clone(),
-            finish: current,
+            finish: start.clone(),
+            start,
         })
     }
 
@@ -139,6 +146,9 @@ impl<'ecode>
             current.unwrap_or_default()
         };
 
+        // move in -> out
+        shift.start = shift.finish.clone();
+
         // NOTE: join will take care of phi node assignment to SP
 
         for op in entity.operations() {
@@ -146,17 +156,20 @@ impl<'ecode>
                 break;
             }
 
-            match (op.value(), &shift.finish) {
-                (Stmt::Assign(ref var, ref expr), StackPointerShift::Shift(ref sft))
+            match op.value() {
+                Stmt::Assign(ref var, ref expr)
                     if SimpleVar::from(var) == SimpleVar::from(self.sp) =>
                 {
                     let mut expr = expr.clone();
-                    let mut subst =
-                        Substitutor::new(SimpleVarSubst::new(&self.sp, sft.clone().into()));
-                    subst.apply_expr(&mut expr);
+
+                    if let StackPointerShift::Shift(ref sft) = shift.finish {
+                        let mut subst =
+                            Substitutor::new(SimpleVarSubst::new(&self.sp, sft.clone().into()));
+                        subst.apply_expr(&mut expr);
+                    }
 
                     if let Some(nsft) = expr.to_constant() {
-                        shift.finish = shift.finish.join(&StackPointerShift::Shift(nsft));
+                        shift.finish = StackPointerShift::Shift(nsft);
                     } else {
                         shift.finish = StackPointerShift::Top; // no idea what it could be (-:
                     }

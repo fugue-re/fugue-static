@@ -47,6 +47,35 @@ impl Display for Block {
     }
 }
 
+pub struct BlockDisplay<'a> {
+    blk: &'a Block,
+    trans: &'a Translator,
+}
+
+impl<'a> Display for BlockDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let tr = Some(self.trans);
+        for (op, assign) in self.blk.phis.iter() {
+            if assign.is_empty() {
+                // NOTE: should never happen
+                writeln!(f, "{} {} ← ϕ(<empty>)", self.blk.location(), op.display(tr))?;
+            } else {
+                write!(f, "{} {} ← ϕ({}", self.blk.location(), op.display(tr), assign[0].display(tr))?;
+                for aop in &assign[1..] {
+                    write!(f, ", {}", aop.display(tr))?;
+                }
+                writeln!(f, ")")?;
+            }
+        }
+
+        for stmt in self.blk.operations.iter() {
+            writeln!(f, "{} {}", stmt.location(), stmt.value().display(tr))?;
+        }
+
+        Ok(())
+    }
+}
+
 impl Block {
     pub fn location(&self) -> &Location {
         self.first().location()
@@ -91,6 +120,10 @@ impl Block {
 
     pub fn operations_mut(&mut self) -> &mut [Entity<Stmt>] {
         &mut self.operations
+    }
+
+    pub fn display<'a>(&'a self, t: &'a Translator) -> BlockDisplay<'a> {
+        BlockDisplay { blk: self, trans: t }
     }
 }
 

@@ -14,7 +14,7 @@ pub mod ddg;
 pub use ddg::DDG;
 
 pub mod function;
-pub use function::{Function, FunctionLifter, FunctionMapping};
+pub use function::{Function, FunctionBuilder, FunctionLifter, FunctionMapping};
 
 pub mod program;
 pub use program::Program;

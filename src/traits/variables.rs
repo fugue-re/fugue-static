@@ -116,6 +116,9 @@ impl<'ecode, T> VisitMut<'ecode> for T where T: Substitution {
             Expr::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
             Expr::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
             Expr::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
+            Expr::Call(ref mut branch_target, ref mut args, bits) => {
+                self.visit_expr_call_mut(branch_target, args, *bits)
+            }
             Expr::Intrinsic(ref name, ref mut args, bits) => {
                 self.visit_expr_intrinsic_mut(name, args, *bits)
             }

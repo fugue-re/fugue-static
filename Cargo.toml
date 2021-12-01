@@ -1,13 +1,13 @@
 [package]
 name = "fugue-static"
-version = "0.2.29"
+version = "0.2.30"
 authors = ["Sam Thomas <st@xv.ax>"]
 edition = "2018"
 
 [dependencies]
 bincode = "1"
 educe = "0.4"
-egg = "0.6"
+egg = "0.7"
 indexmap = "1.7"
 fxhash = "0.2"
 itertools = "0.10"

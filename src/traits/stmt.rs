@@ -7,6 +7,7 @@ pub trait StmtExt {
     fn is_jump(&self) -> bool;
     fn is_cond(&self) -> bool;
     fn is_call(&self) -> bool;
+    fn is_intrinsic(&self) -> bool;
     fn is_return(&self) -> bool;
 }
 
@@ -15,7 +16,8 @@ impl StmtExt for Stmt {
         matches!(self,
                  Stmt::Branch(_) |
                  Stmt::CBranch(_, _) |
-                 Stmt::Call(_) |
+                 Stmt::Call(_, _) |
+                 Stmt::Intrinsic(_, _) |
                  Stmt::Return(_))
     }
 
@@ -28,7 +30,11 @@ impl StmtExt for Stmt {
     }
 
     fn is_call(&self) -> bool {
-        matches!(self, Stmt::Call(_))
+        matches!(self, Stmt::Call(_, _))
+    }
+
+    fn is_intrinsic(&self) -> bool {
+        matches!(self, Stmt::Intrinsic(_, _))
     }
 
     fn is_return(&self) -> bool {

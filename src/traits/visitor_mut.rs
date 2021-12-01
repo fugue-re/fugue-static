@@ -127,6 +127,19 @@ pub trait VisitMut<'ecode> {
         self.visit_expr_mut(fexpr)
     }
 
+    #[allow(unused)]
+    fn visit_expr_call_mut(
+        &mut self,
+        branch_target: &'ecode mut BranchTarget,
+        args: &'ecode mut SmallVec<[Box<Expr>; 4]>,
+        bits: usize,
+    ) {
+        self.visit_branch_target_mut(branch_target);
+        for arg in args.iter_mut() {
+            self.visit_expr_mut(arg);
+        }
+    }
+
     #[allow(unused_variables)]
     fn visit_expr_intrinsic_mut(
         &mut self,
@@ -164,6 +177,9 @@ pub trait VisitMut<'ecode> {
             Expr::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
             Expr::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
             Expr::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
+            Expr::Call(ref mut branch_target, ref mut args, bits) => {
+                self.visit_expr_call_mut(branch_target, args, *bits)
+            }
             Expr::Intrinsic(ref name, ref mut args, bits) => {
                 self.visit_expr_intrinsic_mut(name, args, *bits)
             }
@@ -212,8 +228,11 @@ pub trait VisitMut<'ecode> {
         self.visit_branch_target_mut(branch_target)
     }
 
-    fn visit_stmt_call_mut(&mut self, branch_target: &'ecode mut BranchTarget) {
-        self.visit_branch_target_mut(branch_target)
+    fn visit_stmt_call_mut(&mut self, branch_target: &'ecode mut BranchTarget, args: &'ecode mut SmallVec<[Expr; 4]>) {
+        self.visit_branch_target_mut(branch_target);
+        for arg in args {
+            self.visit_expr_mut(arg);
+        }
     }
 
     fn visit_stmt_return_mut(&mut self, branch_target: &'ecode mut BranchTarget) {
@@ -240,7 +259,7 @@ pub trait VisitMut<'ecode> {
             Stmt::CBranch(ref mut cond, ref mut branch_target) => {
                 self.visit_stmt_cbranch_mut(cond, branch_target)
             }
-            Stmt::Call(ref mut branch_target) => self.visit_stmt_call_mut(branch_target),
+            Stmt::Call(ref mut branch_target, ref mut args) => self.visit_stmt_call_mut(branch_target, args),
             Stmt::Return(ref mut branch_target) => self.visit_stmt_return_mut(branch_target),
             Stmt::Skip => self.visit_stmt_skip_mut(),
             Stmt::Intrinsic(ref name, ref mut args) => self.visit_stmt_intrinsic_mut(name, args),

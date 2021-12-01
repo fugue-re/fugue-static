@@ -116,6 +116,21 @@ pub trait VisitMap<'ecode> {
         )
     }
 
+    fn visit_expr_call(
+        &mut self,
+        branch_target: Box<BranchTarget>,
+        args: SmallVec<[Box<Expr>; 4]>,
+        bits: usize,
+    ) -> Expr {
+        Expr::Call(
+            Box::new(self.visit_branch_target(*branch_target)),
+            args.into_iter()
+                .map(|arg| Box::new(self.visit_expr(*arg)))
+                .collect(),
+            bits,
+        )
+    }
+
     #[allow(unused_variables)]
     fn visit_expr_intrinsic(
         &mut self,
@@ -151,6 +166,7 @@ pub trait VisitMap<'ecode> {
             Expr::Extract(expr, lsb, msb) => self.visit_expr_extract(*expr, lsb, msb),
             Expr::Concat(lexpr, rexpr) => self.visit_expr_concat(*lexpr, *rexpr),
             Expr::IfElse(cond, texpr, fexpr) => self.visit_expr_ite(*cond, *texpr, *fexpr),
+            Expr::Call(branch_target, args, bits) => self.visit_expr_call(branch_target, args, bits),
             Expr::Intrinsic(name, args, bits) => self.visit_expr_intrinsic(name, args, bits),
             Expr::Val(bv) => self.visit_expr_val(bv),
             Expr::Var(var) => self.visit_expr_var(var),
@@ -182,8 +198,11 @@ pub trait VisitMap<'ecode> {
         )
     }
 
-    fn visit_stmt_call(&mut self, branch_target: BranchTarget) -> Stmt {
-        Stmt::Call(self.visit_branch_target(branch_target))
+    fn visit_stmt_call(&mut self, branch_target: BranchTarget, args: SmallVec<[Expr; 4]>) -> Stmt {
+        Stmt::Call(
+            self.visit_branch_target(branch_target),
+            args.into_iter().map(|arg| self.visit_expr(arg)).collect(),
+        )
     }
 
     fn visit_stmt_return(&mut self, branch_target: BranchTarget) -> Stmt {
@@ -207,7 +226,7 @@ pub trait VisitMap<'ecode> {
             Stmt::Store(loc, val, size, space) => self.visit_stmt_store(loc, val, size, space),
             Stmt::Branch(branch_target) => self.visit_stmt_branch(branch_target),
             Stmt::CBranch(cond, branch_target) => self.visit_stmt_cbranch(cond, branch_target),
-            Stmt::Call(branch_target) => self.visit_stmt_call(branch_target),
+            Stmt::Call(branch_target, args) => self.visit_stmt_call(branch_target, args),
             Stmt::Return(branch_target) => self.visit_stmt_return(branch_target),
             Stmt::Skip => self.visit_stmt_skip(),
             Stmt::Intrinsic(name, args) => self.visit_stmt_intrinsic(name, args),

@@ -137,6 +137,9 @@ impl Block {
             // to "instruction local" branch targets and global branches.
             // Then, we process them in reverse order to partition the
             // vector of operations into blocks.
+            // 
+            // NOTE: Expr::Call will not appear due to lifting, and so we
+            // do not need to consider it here.
 
             let mut local_targets = ecode
                 .operations()
@@ -154,7 +157,7 @@ impl Block {
                             None
                         }
                     }
-                    Stmt::Call(BranchTarget::Location(location))
+                    Stmt::Call(BranchTarget::Location(location), _)
                     | Stmt::Return(BranchTarget::Location(location)) => {
                         targets.insert(location.clone());
                         if offset + 1 < ecode.operations().len() {

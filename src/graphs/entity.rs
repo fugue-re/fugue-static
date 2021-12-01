@@ -1840,7 +1840,7 @@ mod test {
             Entity::new("node", Location::new(AddressValue::new(&spc, 0), loc), name)
         };
 
-        let z = mk_ent("Z", usize::MAX);
+        let _z = mk_ent("Z", usize::MAX);
         let b = mk_ent("B", 1);
         let c = mk_ent("C", 2);
         let a = mk_ent("A", 0);

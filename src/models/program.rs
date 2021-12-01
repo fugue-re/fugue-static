@@ -144,7 +144,7 @@ impl<'db> Program<'db> {
         // add all resolvable jumps/calls
         for blk in self.blocks.values() {
             match blk.value().last().value() {
-                Stmt::Call(BranchTarget::Location(location)) => {
+                Stmt::Call(BranchTarget::Location(location), _) => {
                     let tgt_id = EntityId::new("blk", location.clone());
                     let tgt = &self.blocks[&tgt_id];
                     icfg.add_call(blk, tgt);

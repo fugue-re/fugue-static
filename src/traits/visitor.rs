@@ -130,6 +130,14 @@ pub trait Visit<'ecode> {
     }
 
     #[allow(unused_variables)]
+    fn visit_expr_call(&mut self, target: &'ecode BranchTarget, args: &'ecode [Box<Expr>], bits: usize) {
+        self.visit_branch_target(target);
+        for arg in args.iter() {
+            self.visit_expr(arg);
+        }
+    }
+
+    #[allow(unused_variables)]
     fn visit_expr_intrinsic(&mut self, name: &'ecode str, args: &'ecode [Box<Expr>], bits: usize) {
         for arg in args.iter() {
             self.visit_expr(arg);
@@ -155,6 +163,9 @@ pub trait Visit<'ecode> {
             Expr::Extract(ref expr, lsb, msb) => self.visit_expr_extract(expr, *lsb, *msb),
             Expr::Concat(ref lexpr, ref rexpr) => self.visit_expr_concat(lexpr, rexpr),
             Expr::IfElse(ref cond, ref texpr, ref fexpr) => self.visit_expr_ite(cond, texpr, fexpr),
+            Expr::Call(ref target, ref args, bits) => {
+                self.visit_expr_call(target, args, *bits)
+            }
             Expr::Intrinsic(ref name, ref args, bits) => {
                 self.visit_expr_intrinsic(name, args, *bits)
             }
@@ -203,8 +214,11 @@ pub trait Visit<'ecode> {
         self.visit_branch_target(branch_target)
     }
 
-    fn visit_stmt_call(&mut self, branch_target: &'ecode BranchTarget) {
-        self.visit_branch_target(branch_target)
+    fn visit_stmt_call(&mut self, branch_target: &'ecode BranchTarget, args: &'ecode [Expr]) {
+        self.visit_branch_target(branch_target);
+        for arg in args {
+            self.visit_expr(arg);
+        }
     }
 
     fn visit_stmt_return(&mut self, branch_target: &'ecode BranchTarget) {
@@ -231,7 +245,7 @@ pub trait Visit<'ecode> {
             Stmt::CBranch(ref cond, ref branch_target) => {
                 self.visit_stmt_cbranch(cond, branch_target)
             }
-            Stmt::Call(ref branch_target) => self.visit_stmt_call(branch_target),
+            Stmt::Call(ref branch_target, ref args) => self.visit_stmt_call(branch_target, args),
             Stmt::Return(ref branch_target) => self.visit_stmt_return(branch_target),
             Stmt::Skip => self.visit_stmt_skip(),
             Stmt::Intrinsic(ref name, ref args) => self.visit_stmt_intrinsic(name, args),

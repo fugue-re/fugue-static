@@ -72,7 +72,7 @@ define_language! {
 
         "branch" = Branch(Id),
         "cbranch" = CBranch([Id; 2]),
-        "call" = Call(Id),
+        "call" = Call(Vec<Id>),
         "return" = Return(Id),
 
         "location" = Location([Id; 3]), // address * position * space
@@ -110,8 +110,13 @@ pub struct ConstantFolding;
 impl Analysis<ECodeLanguage> for ConstantFolding {
     type Data = Option<BitVec>;
 
-    fn merge(&self, to: &mut Self::Data, from: Self::Data) -> bool {
-        egg::merge_if_different(to, to.as_ref().cloned().or(from))
+    fn merge(&mut self, to: &mut Self::Data, from: Self::Data) -> egg::DidMerge {
+        if from != *to {
+            *to = from;
+            egg::DidMerge(true, false)
+        } else {
+            egg::DidMerge(false, false)
+        }
     }
 
     fn make(egraph: &EGraph<ECodeLanguage, Self>, enode: &ECodeLanguage) -> Self::Data {
@@ -315,7 +320,7 @@ impl<'ecode> Rewriter<'ecode> {
         let oid = self.graph.add(e);
         self.simplify();
 
-        let mut ex = Extractor::new(&self.graph, AstSize);
+        let ex = Extractor::new(&self.graph, AstSize);
         let (_, rec) = ex.find_best(oid.clone());
 
         self.stmts.push((None, oid.clone(), rec));
@@ -532,6 +537,25 @@ impl<'ecode> Visit<'ecode> for Rewriter<'ecode> {
         self.add(L::Intrinsic(ids));
     }
 
+    fn visit_expr_call(&mut self, branch_target: &'ecode BranchTarget, args: &'ecode [Box<Expr>], bits: usize) {
+        use ECodeLanguage as L;
+
+        self.visit_branch_target(branch_target);
+        let tid = self.take_id();
+
+        let mut ids = vec![
+            tid,
+            self.graph.add(L::Value(bits as u64)),
+        ];
+
+        for arg in args {
+            self.visit_expr(arg);
+            ids.push(self.take_id());
+        }
+
+        self.add(L::Intrinsic(ids));
+    }
+
     /*
     fn visit_stmt_phi(&mut self, var: &'ecode Var, vars: &'ecode [Var]) {
         use ECodeLanguage as L;
@@ -573,7 +597,7 @@ impl<'ecode> Visit<'ecode> for Rewriter<'ecode> {
 
         self.simplify();
 
-        let mut ex = Extractor::new(&self.graph, AstSize);
+        let ex = Extractor::new(&self.graph, AstSize);
         let (_, rec) = ex.find_best(exid.clone());
 
         self.stmts.push((Some(var), exid.clone(), rec));
@@ -652,12 +676,23 @@ impl<'ecode> Visit<'ecode> for Rewriter<'ecode> {
         self.add_eff(L::CBranch([exid, tid]))
     }
 
-    fn visit_stmt_call(&mut self, branch_target: &'ecode BranchTarget) {
+    fn visit_stmt_call(&mut self, branch_target: &'ecode BranchTarget, args: &'ecode [Expr]) {
         use ECodeLanguage as L;
 
         self.visit_branch_target(branch_target);
         let tid = self.take_id();
-        self.add_eff(L::Call(tid))
+
+        let mut ids = vec![
+            tid,
+            self.graph.add(L::Value(0)),
+        ];
+
+        for arg in args {
+            self.visit_expr(arg);
+            ids.push(self.take_id());
+        }
+
+        self.add_eff(L::Call(ids))
     }
 
     fn visit_stmt_return(&mut self, branch_target: &'ecode BranchTarget) {
@@ -948,6 +983,16 @@ impl<'ecode> Rewriter<'ecode> {
                 Self::into_value(nodes, (*lsb).into()) as usize,
                 Self::into_value(nodes, (*msb).into()) as usize,
             ),
+            L::Call(parts) => {
+                let branch_target = Self::into_branch_target(translator, nodes, parts[0].into());
+                let size = Self::into_value(nodes, parts[1].into()) as usize;
+
+                Expr::call_with(
+                    branch_target,
+                    parts[2..].iter().map(|arg| Self::into_expr_aux(translator, nodes, (*arg).into())),
+                    size,
+                )
+            },
             L::Intrinsic(parts) => {
                 let name = Self::into_name(nodes, parts[0].into());
                 let size = Self::into_value(nodes, parts[1].into()) as usize;
@@ -1006,9 +1051,13 @@ impl<'ecode> Rewriter<'ecode> {
                 Self::into_expr_aux(translator, nodes, (*c).into()),
                 Self::into_branch_target(translator, nodes, (*bt).into()),
             ),
-            L::Call(bt) => Stmt::Call(
-                Self::into_branch_target(translator, nodes, (*bt).into()),
-            ),
+            L::Call(parts) => {
+                let target = Self::into_branch_target(translator, nodes, parts[0].into());
+                Stmt::call_with(
+                    target,
+                    parts[2..].iter().map(|arg| Self::into_expr_aux(translator, nodes, (*arg).into())),
+                )
+            },
             L::Return(bt) => Stmt::Return(
                 Self::into_branch_target(translator, nodes, (*bt).into()),
             ),
@@ -1045,7 +1094,7 @@ impl<'ecode> Rewriter<'ecode> {
         let exid = self.take_id();
         self.simplify();
 
-        let mut ex = Extractor::new(&self.graph, AstSize);
+        let ex = Extractor::new(&self.graph, AstSize);
         let (_, rec) = ex.find_best(exid.clone());
 
         Self::into_expr_aux(translator, &rec, rec.as_ref().len() - 1)

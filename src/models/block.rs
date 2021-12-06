@@ -20,10 +20,15 @@ pub enum Error {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct Block {
+    #[serde(bound(deserialize = "LocatableId<Block>: serde::Deserialize<'de>"))]
     id: LocatableId<Block>,
+    #[serde(bound(deserialize = "Entity<Located<Phi>>: serde::Deserialize<'de>"))]
     phis: Vec<Entity<Located<Phi>>>,
+    #[serde(bound(deserialize = "Entity<Located<Stmt>>: serde::Deserialize<'de>"))]
     operations: Vec<Entity<Located<Stmt>>>,
+    #[serde(bound(deserialize = "LocationTarget<Block>: serde::Deserialize<'de>"))]
     next_blocks: Vec<LocationTarget<Block>>,
 }
 

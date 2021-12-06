@@ -9,12 +9,37 @@ use crate::types::{Locatable, Relocatable};
 
 pub type Erased = ();
 
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(remote = "UUID")]
+enum UUIDRef {
+    Name {
+        name: u64,
+        scope: u64,
+    },
+    Number {
+        value1: u64,
+        value2: u64,
+    },
+    Event {
+        timestamp: u64,
+        origin: u64,
+    },
+    Derived {
+        timestamp: u64,
+        origin: u64,
+    },
+}
+
 #[derive(educe::Educe)]
 #[educe(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(bound = "")]
 pub struct Id<T> {
     tag: &'static str,
+    #[serde(with = "UUIDRef")]
     uuid: UUID,
     #[educe(Debug(ignore), PartialEq(ignore), Eq(ignore), PartialOrd(ignore), Ord(ignore), Hash(ignore))]
+    #[serde(skip_deserializing)]
     marker: PhantomData<T>,
 }
 
@@ -85,7 +110,9 @@ pub trait Identifiable<V> {
     fn id(&self) -> Id<V>;
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct LocatableId<T> {
+    #[serde(bound(deserialize = "Id<T>: serde::Deserialize<'de>"))]
     id: Id<T>,
     location: Location,
 }

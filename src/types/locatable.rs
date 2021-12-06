@@ -22,6 +22,7 @@ pub trait Relocatable: Locatable {
 }
 
 #[derive(Clone)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct Located<V> {
     location: Location,
     value: V,
@@ -91,7 +92,9 @@ impl<V> Relocatable for Located<V> {
     }
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
 pub enum LocationTarget<T> {
+    #[serde(bound(deserialize = "Id<T>: serde::Deserialize<'de>"))]
     Resolved(Id<T>),       // id <-> location
     Fixed(Location),       // location -> address * position
     Computed(Expr, usize), // address * position

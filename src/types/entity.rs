@@ -11,7 +11,9 @@ use crate::traits::collect::EntityRefCollector;
 use crate::types::{Id, Identifiable, Located, Locatable, Relocatable};
 
 #[derive(Debug, Clone)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct Entity<V: Clone> {
+    #[serde(bound(deserialize = "Id<V>: serde::Deserialize<'de>"))]
     id: Id<V>,
     value: V,
 }

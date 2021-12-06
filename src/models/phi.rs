@@ -5,6 +5,7 @@ use std::fmt::{self, Display};
 use crate::types::{Entity, Located};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub struct Phi {
     var: Var,
     vars: Vec<Var>

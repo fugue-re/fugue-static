@@ -161,6 +161,11 @@ where
     }
 }
 
+pub trait VisitEntityGraph<'a, V, E> {
+    fn visit_entity_vertex(&mut self, vertex: VertexIndex<V>);
+    fn visit_entity_edge(&mut self, edge: EdgeIndex<E>);
+}
+
 impl<'a, V, E> EntityGraph<'a, V, E>
 where
     E: Clone,
@@ -325,6 +330,18 @@ where
             .and_then(move |e| self.entity_graph.edge_weight_mut(e))
     }
 
+    pub fn edge_relation(&self, ex: EdgeIndex<E>) -> Option<(VertexIndex<V>, VertexIndex<V>, &E)> {
+        let (s, e) = self.entity_graph.edge_endpoints(*ex)?;
+        self.entity_graph.edge_weight(*ex)
+            .map(|v| (s.into(), e.into(), v))
+    }
+
+    pub fn edge_relation_mut(&mut self, ex: EdgeIndex<E>) -> Option<(VertexIndex<V>, VertexIndex<V>, &mut E)> {
+        let (s, e) = self.entity_graph.edge_endpoints(*ex)?;
+        self.entity_graph.edge_weight_mut(*ex)
+            .map(|v| (s.into(), e.into(), v))
+    }
+    
     pub fn add_entity<T>(&mut self, entity: T) -> VertexIndex<V>
     where
         T: IntoEntityRef<'a, T = V>,
@@ -778,6 +795,16 @@ where
             || matches!(components.iter().next(), Some(v) if self.predecessors(*v).any(|(p, _)| p == *v))
     }
     */
+    
+    pub fn visit_graph<T: VisitEntityGraph<'a, V, E>>(&self, visitor: &mut T) {
+        for vx in self.entity_graph.node_indices().map(VertexIndex::from) {
+            visitor.visit_entity_vertex(vx);
+        }
+        
+        for ex in self.entity_graph.edge_indices().map(EdgeIndex::from) {
+            visitor.visit_entity_edge(ex);
+        }
+    }
 }
 
 impl<'a, V, E> EntityGraph<'a, V, E>

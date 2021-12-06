@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 
 use crate::graphs::entity::AsEntityGraph;
 use crate::traits::collect::EntityValueCollector;
+use crate::types::Identifiable;
 
 pub mod stack_pointer_offsets;
 
@@ -16,7 +17,7 @@ where V: 'a + Clone,
     fn transfer(&mut self, entity: &'a V, current: Option<O>) -> Result<O, Self::Err>;
 
     fn analyse<C>(&mut self, g: &'a G) -> Result<C, Self::Err>
-    where C: EntityValueCollector<O> {
+    where C: EntityValueCollector<V, O> {
         let mut results = C::default();
 
         let graph = g.entity_graph();
@@ -27,7 +28,7 @@ where V: 'a + Clone,
                 .successors(node)
                 .try_fold(None, |acc, (succ_nx, _)| {
                     let succ = graph.entity(succ_nx);
-                    if let Some(next) = results.get(succ.id()) {
+                    if let Some(next) = results.get(&succ.id()) {
                         if let Some(acc) = acc {
                             self.join(acc, next).map(Option::from)
                         } else {
@@ -42,8 +43,8 @@ where V: 'a + Clone,
             let eid = entity.id();
             let current = self.transfer(entity.value(), current_in)?;
 
-            if !matches!(results.get(eid), Some(old_current) if *old_current == current) {
-                results.insert(eid.clone(), current);
+            if !matches!(results.get(&eid), Some(old_current) if *old_current == current) {
+                results.insert(eid, current);
 
                 for (pred, _) in graph.predecessors(node) {
                     if !queue.contains(&pred) {
@@ -68,7 +69,7 @@ where V: 'a + Clone,
     fn transfer(&mut self, entity: &'a V, current: Option<O>) -> Result<O, Self::Err>;
 
     fn analyse<C>(&mut self, g: &'a G) -> Result<C, Self::Err>
-    where C: EntityValueCollector<O> {
+    where C: EntityValueCollector<V, O> {
         let mut results = C::default();
 
         let graph = g.entity_graph();
@@ -79,7 +80,7 @@ where V: 'a + Clone,
                 .predecessors(node)
                 .try_fold(None, |acc, (pred_nx, _)| {
                     let pred = graph.entity(pred_nx);
-                    if let Some(next) = results.get(pred.id()) {
+                    if let Some(next) = results.get(&pred.id()) {
                         if let Some(acc) = acc {
                             self.join(acc, next).map(Option::from)
                         } else {
@@ -94,8 +95,8 @@ where V: 'a + Clone,
             let eid = entity.id();
             let current = self.transfer(entity.value(), current_in)?;
 
-            if !matches!(results.get(eid), Some(old_current) if *old_current == current) {
-                results.insert(eid.clone(), current);
+            if !matches!(results.get(&eid), Some(old_current) if *old_current == current) {
+                results.insert(eid, current);
 
                 for (succ, _) in graph.successors(node) {
                     if !queue.contains(&succ) {

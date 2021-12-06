@@ -1,15 +1,15 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use fugue::db;
 
 use fugue::ir::Translator;
 use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::il::ecode::{BranchTarget, ECode, Entity, EntityId, Location, Stmt};
+use fugue::ir::il::ecode::{BranchTarget, ECode, Location, Stmt};
 
 use crate::models::cfg::{BranchKind, CFG};
-use crate::models::{Block, BlockLifter, BlockMapping};
+use crate::models::{Block, BlockLifter};
 use crate::traits::StmtExt;
-use crate::types::EntityMap;
+use crate::types::{Id, Identifiable, Locatable, LocatableId, Entity, EntityIdMapping, EntityLocMapping};
 
 use thiserror::Error;
 
@@ -21,24 +21,21 @@ pub enum Error {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
+    id: LocatableId<Function>,
     symbol: String,
-    location: Location,
-    blocks: HashSet<EntityId>,
-    callers: HashMap<EntityId, EntityId>,
+    block_ids: HashMap<Id<Block>, Location>,
+    callers: HashMap<LocatableId<Function>, LocatableId<Stmt>>,
 }
 
-pub trait FunctionMapping {
-    fn functions(&self) -> &EntityMap<Function>;
-    fn functions_mut(&mut self) -> &mut EntityMap<Function>;
-}
-
-impl FunctionMapping for EntityMap<Function> {
-    fn functions(&self) -> &EntityMap<Function> {
-        self
+impl Identifiable<Function> for Function {
+    fn id(&self) -> Id<Function> {
+        self.id.id()
     }
+}
 
-    fn functions_mut(&mut self) -> &mut EntityMap<Function> {
-        self
+impl Locatable for Function {
+    fn location(&self) -> Location {
+        self.id.location()
     }
 }
 
@@ -47,32 +44,25 @@ impl Function {
         &self.symbol
     }
 
-    pub fn location(&self) -> &Location {
-        &self.location
+    pub fn blocks(&self) -> &HashMap<Id<Block>, Location> {
+        &self.block_ids
     }
 
-    pub fn blocks(&self) -> &HashSet<EntityId> {
-        &self.blocks
-    }
-
-    pub fn blocks_mut(&mut self) -> &mut HashSet<EntityId> {
-        &mut self.blocks
-    }
-
-    pub fn callers(&self) -> &HashMap<EntityId, EntityId> {
+    pub fn callers(&self) -> &HashMap<LocatableId<Function>, LocatableId<Stmt>> {
         &self.callers
     }
 
-    pub fn callers_mut(&mut self) -> &mut HashMap<EntityId, EntityId> {
+    pub fn callers_mut(&mut self) -> &mut HashMap<LocatableId<Function>, LocatableId<Stmt>> {
         &mut self.callers
     }
 
-    pub fn cfg<'db, M: BlockMapping>(&self, mapping: &'db M) -> CFG<'db, Block> {
+    pub fn cfg<'db, M>(&self, mapping: &'db M) -> CFG<'db, Block>
+    where M: 'db + EntityIdMapping<Block> + EntityLocMapping<Block> {
         let mut cfg = CFG::new();
+        let mut succs = Vec::new();
 
-        let blks = mapping.blocks();
-        for blkid in self.blocks.iter() {
-            let blk = &blks[blkid];
+        for blkid in self.block_ids.keys() {
+            let blk = &mapping.lookup_by_id(*blkid).expect("block exists");
             if blk.location() == self.location() {
                 cfg.add_root_entity(blk);
             } else {
@@ -80,31 +70,29 @@ impl Function {
             }
         }
 
-        for blkid in self.blocks.iter() {
-            let blk = &blks[blkid];
-            match blk.value().last().value() {
-                Stmt::CBranch(_, BranchTarget::Location(location)) => {
-                    let tgt_id = EntityId::new("blk", location.clone());
-                    if self.blocks.contains(&tgt_id) {
-                        let tgt = &blks[&tgt_id];
-                        let fall_id = blk.value().next_blocks().next().unwrap();
-                        let fall = &blks[&fall_id];
+        for blkid in self.block_ids.keys() {
+            let blk = &mapping.lookup_by_id(*blkid).expect("block exists");
+            match &**blk.value().last().value() {
+                Stmt::CBranch(_, BranchTarget::Location(ref location)) => {
+                    let tgt = &mapping.lookup_by_location::<Option<_>>(location).expect("block exists");
+                    if self.block_ids.contains_key(&tgt.id()) {
+                        let fall = blk.next_block_entities::<_, Option<_>>(mapping).unwrap();
                         cfg.add_cond(blk, tgt, fall);
                     }
                 }
                 Stmt::Branch(BranchTarget::Location(location)) => {
-                    let tgt_id = EntityId::new("blk", location.clone());
-                    if self.blocks.contains(&tgt_id) {
-                        let tgt = &blks[&tgt_id];
+                    let tgt = &mapping.lookup_by_location::<Option<_>>(location).expect("block exists");
+                    if self.block_ids.contains_key(&tgt.id()) {
                         cfg.add_jump(blk, tgt);
                     }
                 }
                 _ => (),
             }
 
-            let blkx = cfg.entity_vertex(blkid).unwrap();
-            for tgt in blk.next_blocks() {
-                if let Some(vx) = cfg.entity_vertex(tgt) {
+            let blkx = cfg.entity_vertex(*blkid).unwrap();
+            blk.next_block_entities_with(mapping, &mut succs);
+            for tgt in succs.drain(..) {
+                if let Some(vx) = cfg.entity_vertex(tgt.id()) {
                     if !cfg.contains_edge(blkx, vx)
                         && !blk
                             .operations()
@@ -175,15 +163,23 @@ impl<'trans> FunctionBuilder<'trans> {
     }
 
     pub fn build(self) -> (Entity<Function>, Vec<Entity<Block>>) {
+        let id = LocatableId::new("fcn", Location::new(self.translator.address(self.address), 0));
+        let mut block_ids = HashMap::default();
+        
+        for blk in self.blocks.iter() {
+            let (id, loc) = LocatableId::from(blk).into_parts();
+            block_ids.insert(id, loc);
+        }
+        
         let f = Function {
+            id,
             symbol: self.symbol,
-            location: Location::new(self.translator.address(self.address), 0),
-            blocks: self.blocks.iter().map(|blk| blk.id().clone()).collect(),
+            block_ids,
             callers: HashMap::default(),
         };
         let blocks = self.blocks;
-
-        (Entity::new("fcn", f.location.clone(), f), blocks)
+        
+        (f.into(), blocks)
     }
 }
 
@@ -215,11 +211,12 @@ impl<'trans> FunctionLifter<'trans> {
         mut transform: F,
     ) -> Result<(Entity<Function>, Vec<Entity<Block>>), Error>
     where F: FnMut(&mut ECode) {
+        let id = LocatableId::new("fcn", Location::new(self.translator.address(f.address()), 0));
         let mut blocks = Vec::new();
         let mut function = Function {
+            id,
             symbol: f.name().to_string(),
-            location: Location::new(self.translator.address(f.address()), 0),
-            blocks: HashSet::new(),
+            block_ids: HashMap::new(),
             callers: HashMap::new(),
         };
 
@@ -227,10 +224,11 @@ impl<'trans> FunctionLifter<'trans> {
             let blks = self.block_lifter.from_block_with(b, &mut transform)?;
 
             blocks.reserve(blks.len());
-            function.blocks.reserve(blks.len());
+            function.block_ids.reserve(blks.len());
 
             for sb in blks.iter() {
-                function.blocks.insert(sb.id().clone());
+                let (id, loc) = LocatableId::from(sb).into_parts();
+                function.block_ids.insert(id, loc);
             }
 
             blocks.extend(blks.into_iter());
@@ -242,11 +240,11 @@ impl<'trans> FunctionLifter<'trans> {
             .filter(|r| r.is_call() && !r.source_id().is_invalid())
         {
             if let Some(sfcn) = self.database.functions().get(r.source_id().index()) {
-                let fid = EntityId::new(
+                let fid = LocatableId::invalid(
                     "fcn",
                     Location::new(self.translator.address(sfcn.address()), 0),
                 );
-                let sid = EntityId::new(
+                let sid = LocatableId::invalid(
                     "stmt",
                     Location::new(self.translator.address(r.address()), 0),
                 );
@@ -254,7 +252,6 @@ impl<'trans> FunctionLifter<'trans> {
             }
         }
 
-        let entity = Entity::new("fcn", function.location.clone(), function);
-        Ok((entity, blocks))
+        Ok((function.into(), blocks))
     }
 }

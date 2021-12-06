@@ -1,19 +1,20 @@
 use fugue::db::Database;
 
 use fugue::ir::address::IntoAddress;
-use fugue::ir::il::ecode::{BranchTarget, Entity, EntityId, Location, Stmt};
+use fugue::ir::il::ecode::{BranchTarget, Location, Stmt};
 use fugue::ir::space::{AddressSpace, SpaceKind};
 use fugue::ir::Translator;
 
-use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::borrow::{Borrow, Cow};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use crate::models::{Block, BlockMapping};
-use crate::models::{Function, FunctionLifter, FunctionMapping};
+use crate::models::Block;
+use crate::models::{Function, FunctionLifter};
 use crate::models::{CFG, CG};
 use crate::transforms::normalise::{NormaliseVariables, VariableNormaliser};
-use crate::types::EntityMap;
+use crate::traits::collect::EntityRefCollector;
+use crate::types::{Id, Identifiable, Locatable, EntityIdMapping, EntityLocMapping, EntityMap, EntityRef, IntoEntityRef};
 
 use thiserror::Error;
 
@@ -29,9 +30,10 @@ pub struct Program<'db> {
     translator: Translator,
     stack_space: Arc<AddressSpace>,
     functions: EntityMap<Function>,
-    functions_by_location: HashMap<Location, EntityId>,
-    functions_by_symbol: HashMap<String, EntityId>,
+    functions_by_location: HashMap<Location, BTreeSet<Id<Function>>>,
+    functions_by_symbol: HashMap<String, Id<Function>>,
     blocks: EntityMap<Block>,
+    blocks_by_location: HashMap<Location, BTreeSet<Id<Block>>>,
 }
 
 impl<'db> Program<'db> {
@@ -54,11 +56,12 @@ impl<'db> Program<'db> {
 
         let mut function_lifter = FunctionLifter::new(&trans, database);
 
-        let mut functions = EntityMap::default();
         let mut blocks = EntityMap::default();
+        let mut blocks_by_location = HashMap::<Location, BTreeSet<_>>::default();
 
+        let mut functions = EntityMap::default();
         let mut functions_by_symbol = HashMap::default();
-        let mut functions_by_location = HashMap::default();
+        let mut functions_by_location = HashMap::<Location, BTreeSet<_>>::default();
 
         let mut normaliser = VariableNormaliser::new(&trans);
 
@@ -73,10 +76,22 @@ impl<'db> Program<'db> {
 
             functions.insert(id.clone(), fcn);
             functions_by_symbol.insert(symbol, id.clone());
-            functions_by_location.insert(location, id);
+            functions_by_location.entry(location)
+                .or_default()
+                .insert(id);
 
             blocks.reserve(blks.len());
-            blocks.extend(blks.into_iter().map(|blk| (blk.id().clone(), blk)));
+            blocks_by_location.reserve(blks.len());
+
+            for blk in blks.into_iter() {
+                let id = blk.id();
+                let location = blk.location();
+
+                blocks.insert(id, blk);
+                blocks_by_location.entry(location)
+                    .or_default()
+                    .insert(id);
+            }
 
             normaliser.reset();
         }
@@ -89,6 +104,7 @@ impl<'db> Program<'db> {
             functions_by_symbol,
             functions_by_location,
             blocks,
+            blocks_by_location,
         })
     }
 
@@ -96,22 +112,21 @@ impl<'db> Program<'db> {
         &self.translator
     }
 
-    pub fn function_by_address<A: IntoAddress>(&self, address: A) -> Option<&Entity<Function>> {
+    pub fn function_by_address<'a, C: EntityRefCollector<'a, Function>>(&'a self, address: impl IntoAddress) -> C {
         let address = address.into_address_value(self.translator.manager().default_space_ref());
         let location = Location::new(address, 0);
-
-        self.functions_by_location
-            .get(&location)
-            .and_then(|id| self.functions.get(id))
+        
+        self.lookup_by_location::<C>(&location)
     }
 
-    pub fn function_by_symbol<S: AsRef<str>>(&self, symbol: S) -> Option<&Entity<Function>> {
+    pub fn function_by_symbol<S: AsRef<str>>(&self, symbol: S) -> Option<EntityRef<Function>> {
         self.functions_by_symbol
             .get(symbol.as_ref())
             .and_then(|id| self.functions.get(id))
+            .map(|e| e.into_entity_ref())
     }
 
-    pub fn cg(&self) -> CG {
+    pub fn cg(&self) -> CG<Stmt> {
         let mut cg = CG::new();
 
         // add all functions
@@ -121,8 +136,8 @@ impl<'db> Program<'db> {
 
         // add all calls
         for fcn in self.functions.values() {
-            for (caller, stmt) in fcn.callers().iter().filter_map(|(id, sid)| self.functions.get(id).map(|f| (f, sid))) {
-                cg.add_call_via(caller, fcn, stmt.clone());
+            for (caller, stmt) in fcn.callers().iter().filter_map(|(lid, sid)| self.functions.get(&lid.id()).map(|f| (f, sid))) {
+                cg.add_call_via(caller, fcn, stmt.id());
             }
         }
 
@@ -134,7 +149,7 @@ impl<'db> Program<'db> {
 
         // add all blocks
         for blk in self.blocks.values() {
-            if self.functions_by_location.contains_key(blk.location()) {
+            if self.functions_by_location.contains_key(&blk.location()) {
                 icfg.add_root_entity(blk);
             } else {
                 icfg.add_entity(blk);
@@ -143,25 +158,27 @@ impl<'db> Program<'db> {
 
         // add all resolvable jumps/calls
         for blk in self.blocks.values() {
-            match blk.value().last().value() {
+            match &**blk.value().last().value() {
                 Stmt::Call(BranchTarget::Location(location), _) => {
-                    let tgt_id = EntityId::new("blk", location.clone());
-                    let tgt = &self.blocks[&tgt_id];
-                    icfg.add_call(blk, tgt);
+                    if let Some(tgt) = self.lookup_by_location::<Option<_>>(location) {
+                        icfg.add_call(blk, tgt);
+                    }
                 }
                 Stmt::CBranch(_, BranchTarget::Location(location)) => {
-                    let tgt_id = EntityId::new("blk", location.clone());
-                    let tgt = &self.blocks[&tgt_id];
-
-                    let fall_id = blk.next_blocks().next().unwrap();
-                    let fall = &self.blocks[&fall_id];
+                    let tgt = self.lookup_by_location::<Option<_>>(location);
+                    if tgt.is_none() {
+                        continue;
+                    }
+                    
+                    let tgt = tgt.unwrap();
+                    let fall = blk.next_block_entities::<_, Option<_>>(self).unwrap();
 
                     icfg.add_cond(blk, tgt, fall);
                 }
                 Stmt::Branch(BranchTarget::Location(location)) => {
-                    let tgt_id = EntityId::new("blk", location.clone());
-                    let tgt = &self.blocks[&tgt_id];
-                    icfg.add_jump(blk, tgt);
+                    if let Some(tgt) = self.lookup_by_location::<Option<_>>(location) {
+                        icfg.add_jump(blk, tgt);
+                    }
                 }
                 _ => (),
             }
@@ -170,23 +187,39 @@ impl<'db> Program<'db> {
     }
 }
 
-impl<'db> BlockMapping for Program<'db> {
-    fn blocks(&self) -> &EntityMap<Block> {
-        &self.blocks
-    }
-
-    fn blocks_mut(&mut self) -> &mut EntityMap<Block> {
-        &mut self.blocks
+impl<'db> EntityIdMapping<Block> for Program<'db> {
+    fn lookup_by_id(&self, id: Id<Block>) -> Option<EntityRef<Block>> {
+        self.blocks.get(&id).map(Cow::Borrowed)
     }
 }
 
-impl<'db> FunctionMapping for Program<'db> {
-    fn functions(&self) -> &EntityMap<Function> {
-        &self.functions
+impl<'db> EntityLocMapping<Block> for Program<'db> {
+    fn lookup_by_location_with<'a, C: EntityRefCollector<'a, Block>>(&'a self, loc: &Location, collect: &mut C) {
+        if let Some(ids) = self.blocks_by_location.get(loc) {
+            for id in ids.iter() {
+                if let Some(e) = self.lookup_by_id(*id) {
+                    collect.insert(e);
+                }
+            }
+        }
     }
+}
 
-    fn functions_mut(&mut self) -> &mut EntityMap<Function> {
-        &mut self.functions
+impl<'db> EntityIdMapping<Function> for Program<'db> {
+    fn lookup_by_id(&self, id: Id<Function>) -> Option<EntityRef<Function>> {
+        self.functions.get(&id).map(Cow::Borrowed)
+    }
+}
+
+impl<'db> EntityLocMapping<Function> for Program<'db> {
+    fn lookup_by_location_with<'a, C: EntityRefCollector<'a, Function>>(&'a self, loc: &Location, collect: &mut C) {
+        if let Some(ids) = self.functions_by_location.get(loc) {
+            for id in ids.iter() {
+                if let Some(e) = self.lookup_by_id(*id) {
+                    collect.insert(e);
+                }
+            }
+        }
     }
 }
 

@@ -27,18 +27,6 @@ use crate::models::{Block, CFG};
 use crate::types::{SimpleVar, VarView, VarViews};
 use crate::traits::*;
 
-trait VarClass<'a> {
-    fn class_equivalent<V: Into<SimpleVar<'a>>>(&'a self, other: V, classes: &VarViews) -> bool;
-}
-
-impl<'a, T> VarClass<'a> for T where T: 'a, &'a T: Into<SimpleVar<'a>> {
-    fn class_equivalent<V: Into<SimpleVar<'a>>>(&'a self, other: V, classes: &VarViews) -> bool {
-        let sc = classes.enclosing(self);
-        let oc = classes.enclosing(other);
-        sc == oc
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct VariableAliasNormaliser {
     register_space: AddressSpaceId,

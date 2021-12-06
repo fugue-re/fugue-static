@@ -5,14 +5,19 @@ use interval_tree::{IntervalMap, IntervalSet};
 
 use std::hash::Hash;
 
-use fugue::ir::il::ecode::EntityId;
-
 use crate::traits::AsInterval;
+use crate::types::{Id, Identifiable, EntityRef, IntoEntityRef};
 
-pub trait EntityValueCollector<V>: Default {
-    fn get(&self, id: &EntityId) -> Option<&V>;
-    fn insert(&mut self, id: EntityId, value: V);
-    fn remove(&mut self, id: &EntityId) -> Option<V>;
+pub trait EntityValueCollector<V, T>: Default {
+    fn get(&self, id: &Id<V>) -> Option<&T>;
+    fn insert(&mut self, id: Id<V>, value: T);
+    fn remove(&mut self, id: &Id<V>) -> Option<T>;
+}
+
+pub trait EntityRefCollector<'a, V>: Default where V: Clone {
+    fn get(&self, id: &Id<V>) -> Option<EntityRef<V>>;
+    fn insert<E: IntoEntityRef<'a, T = V>>(&mut self, entity: E);
+    fn remove(&mut self, id: &Id<V>);
 }
 
 pub trait ValueRefCollector<'ecode, V>: Default {
@@ -21,8 +26,8 @@ pub trait ValueRefCollector<'ecode, V>: Default {
     fn retain_difference_ref(&mut self, other: &Self);
 }
 
-pub trait EntityValueRefCollector<'ecode, V>: Default {
-    fn insert_ref(&mut self, id: EntityId, value: &'ecode V);
+pub trait EntityValueRefCollector<'ecode, V, T>: Default {
+    fn insert_ref(&mut self, id: Id<V>, value: &'ecode T);
     fn merge_ref(&mut self, other: &mut Self);
     fn retain_difference_ref(&mut self, other: &Self);
 }
@@ -67,20 +72,84 @@ impl<'ecode, V> ValueMutCollector<'ecode, V> for Vec<&'ecode mut V> where V: Eq 
     }
 }
 
-impl<V> EntityValueCollector<V> for HashMap<EntityId, V> {
+impl<'a, V> EntityRefCollector<'a, V> for Vec<EntityRef<'a, V>> where V: Clone {
     #[inline(always)]
-    fn get(&self, id: &EntityId) -> Option<&V> {
+    fn get(&self, id: &Id<V>) -> Option<EntityRef<V>> {
+        self.iter().find(|r| r.id() == *id).map(|v| EntityRef::Borrowed(&*v))
+    }
+
+    #[inline(always)]
+    fn insert<E: IntoEntityRef<'a, T = V>>(&mut self, value: E) {
+        self.push(value.into_entity_ref());
+    }
+
+    #[inline(always)]
+    fn remove(&mut self, id: &Id<V>) {
+        self.retain(|v| v.id() != *id)
+    }
+}
+
+impl<'a, V> EntityRefCollector<'a, V> for Option<EntityRef<'a, V>> where V: Clone {
+    #[inline(always)]
+    fn get(&self, id: &Id<V>) -> Option<EntityRef<V>> {
+        if let Some(e) = self {
+            if e.id() == *id {
+                Some(e.into_entity_ref())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    fn insert<E: IntoEntityRef<'a, T = V>>(&mut self, value: E) {
+        if self.is_none() {
+            *self = Some(value.into_entity_ref());
+        }
+    }
+
+    #[inline(always)]
+    fn remove(&mut self, id: &Id<V>) {
+        if matches!(self, Some(e) if e.id() == *id) {
+            *self = None;
+        }
+    }
+}
+
+impl<V, T> EntityValueCollector<V, T> for HashMap<Id<V>, T> {
+    #[inline(always)]
+    fn get(&self, id: &Id<V>) -> Option<&T> {
         self.get(id)
     }
 
     #[inline(always)]
-    fn insert(&mut self, id: EntityId, value: V) {
+    fn insert(&mut self, id: Id<V>, value: T) {
         self.insert(id, value);
     }
 
     #[inline(always)]
-    fn remove(&mut self, id: &EntityId) -> Option<V> {
+    fn remove(&mut self, id: &Id<V>) -> Option<T> {
         self.remove(id)
+    }
+}
+
+impl<'a, V> EntityRefCollector<'a, V> for HashMap<Id<V>, EntityRef<'a, V>> where V: Clone {
+    #[inline(always)]
+    fn get(&self, id: &Id<V>) -> Option<EntityRef<V>> {
+        self.get(id).map(|v| EntityRef::Borrowed(&*v))
+    }
+
+    #[inline(always)]
+    fn insert<E: IntoEntityRef<'a, T = V>>(&mut self, value: E) {
+        let er = value.into_entity_ref();
+        self.insert(er.id(), er);
+    }
+
+    #[inline(always)]
+    fn remove(&mut self, id: &Id<V>) {
+        self.remove(id);
     }
 }
 
@@ -102,9 +171,9 @@ impl<'ecode, V> ValueRefCollector<'ecode, V> for HashSet<&'ecode V> where V: Eq 
     }
 }
 
-impl<'ecode, V> EntityValueRefCollector<'ecode, V> for HashSet<(EntityId, &'ecode V)> where V: Eq + Hash {
+impl<'ecode, V, T> EntityValueRefCollector<'ecode, V, T> for HashSet<(Id<V>, &'ecode T)> where T: Eq + Hash {
     #[inline(always)]
-    fn insert_ref(&mut self, id: EntityId, var: &'ecode V) {
+    fn insert_ref(&mut self, id: Id<V>, var: &'ecode T) {
         self.insert((id, var));
     }
 
@@ -137,19 +206,19 @@ impl<'ecode, V> ValueMutCollector<'ecode, V> for HashSet<&'ecode mut V> where V:
     }
 }
 
-impl<V> EntityValueCollector<V> for BTreeMap<EntityId, V> {
+impl<V, T> EntityValueCollector<V, T> for BTreeMap<Id<V>, T> {
     #[inline(always)]
-    fn get(&self, id: &EntityId) -> Option<&V> {
+    fn get(&self, id: &Id<V>) -> Option<&T> {
         self.get(id)
     }
 
     #[inline(always)]
-    fn insert(&mut self, id: EntityId, value: V) {
+    fn insert(&mut self, id: Id<V>, value: T) {
         self.insert(id, value);
     }
 
     #[inline(always)]
-    fn remove(&mut self, id: &EntityId) -> Option<V> {
+    fn remove(&mut self, id: &Id<V>) -> Option<T> {
         self.remove(id)
     }
 }
@@ -172,9 +241,9 @@ impl<'ecode, V> ValueRefCollector<'ecode, V> for BTreeSet<&'ecode V> where V: Or
     }
 }
 
-impl<'ecode, V> EntityValueRefCollector<'ecode, V> for BTreeSet<(EntityId, &'ecode V)> where V: Ord {
+impl<'ecode, V, T> EntityValueRefCollector<'ecode, V, T> for BTreeSet<(Id<V>, &'ecode T)> where T: Ord {
     #[inline(always)]
-    fn insert_ref(&mut self, id: EntityId, var: &'ecode V) {
+    fn insert_ref(&mut self, id: Id<V>, var: &'ecode T) {
         self.insert((id, var));
     }
 
@@ -270,9 +339,9 @@ impl<'ecode, V, I> ValueMutCollector<'ecode, V> for IntervalMap<I, &'ecode mut V
     }
 }
 
-impl<'ecode, V, I> EntityValueRefCollector<'ecode, V> for IntervalMap<I, (EntityId, &'ecode V)> where V: AsInterval<I>, I: Clone + Ord {
+impl<'ecode, V, I, T> EntityValueRefCollector<'ecode, V, T> for IntervalMap<I, (Id<V>, &'ecode T)> where T: AsInterval<I>, I: Clone + Ord {
     #[inline(always)]
-    fn insert_ref(&mut self, id: EntityId, var: &'ecode V) {
+    fn insert_ref(&mut self, id: Id<V>, var: &'ecode T) {
         self.insert(var.as_interval(), (id, var));
     }
 

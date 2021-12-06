@@ -1,4 +1,4 @@
-use fugue::ir::il::ecode::{Entity, EntityId, Location};
+use fugue::ir::il::ecode::Location;
 use fxhash::FxBuildHasher;
 
 use petgraph::algo::{has_path_connecting, kosaraju_scc, DfsSpace};
@@ -13,13 +13,11 @@ use std::ops::Deref;
 
 use indexmap::map::IterMut as EntityIterMutInner;
 
-use crate::traits::IntoEntityRef;
-use crate::types::EntityRef;
+use crate::graphs::algorithms::dominance::{Dominance, Dominators};
+use crate::graphs::algorithms::simple_cycles::SimpleCycles;
+use crate::graphs::traversals::heuristic::{PostOrder, RevPostOrder};
 
-use super::algorithms::dominance::{Dominance, Dominators};
-use super::algorithms::simple_cycles::SimpleCycles;
-
-use super::traversals::heuristic::{PostOrder, RevPostOrder};
+use crate::types::{Id, Identifiable, Entity, EntityRef, IntoEntityRef};
 
 type HashSet<K> = std::collections::HashSet<K, FxBuildHasher>;
 type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
@@ -116,20 +114,20 @@ impl<T> From<petgraph::graph::EdgeIndex> for EdgeIndex<T> {
     }
 }
 
-impl<'a, V, E> AsRef<StableDiGraph<EntityId, E>> for EntityGraph<'a, V, E>
+impl<'a, V, E> AsRef<StableDiGraph<Id<V>, E>> for EntityGraph<'a, V, E>
 where
     V: Clone,
 {
-    fn as_ref(&self) -> &StableDiGraph<EntityId, E> {
+    fn as_ref(&self) -> &StableDiGraph<Id<V>, E> {
         &self.entity_graph
     }
 }
 
-impl<'a, V, E> AsMut<StableDiGraph<EntityId, E>> for EntityGraph<'a, V, E>
+impl<'a, V, E> AsMut<StableDiGraph<Id<V>, E>> for EntityGraph<'a, V, E>
 where
     V: Clone,
 {
-    fn as_mut(&mut self) -> &mut StableDiGraph<EntityId, E> {
+    fn as_mut(&mut self) -> &mut StableDiGraph<Id<V>, E> {
         &mut self.entity_graph
     }
 }
@@ -139,12 +137,12 @@ pub struct EntityGraph<'a, V, E>
 where
     V: Clone,
 {
-    pub(crate) entity_graph: StableDiGraph<EntityId, E>,
+    pub(crate) entity_graph: StableDiGraph<Id<V>, E>,
 
-    pub(crate) entity_roots: IndexSet<(EntityId, VertexIndex<V>)>,
-    pub(crate) entity_leaves: IndexSet<(EntityId, VertexIndex<V>)>,
+    pub(crate) entity_roots: IndexSet<(Id<V>, VertexIndex<V>)>,
+    pub(crate) entity_leaves: IndexSet<(Id<V>, VertexIndex<V>)>,
 
-    pub(crate) entities: IndexMap<EntityId, (VertexIndex<V>, Cow<'a, Entity<V>>)>,
+    pub(crate) entities: IndexMap<Id<V>, (VertexIndex<V>, Cow<'a, Entity<V>>)>,
     pub(crate) entity_versions: HashMap<Location, usize>,
 }
 
@@ -297,8 +295,8 @@ where
         self.entity_graph.node_count()
     }
 
-    pub fn entity_vertex(&self, id: &EntityId) -> Option<VertexIndex<V>> {
-        self.entities.get(id).map(|v| v.0)
+    pub fn entity_vertex(&self, id: Id<V>) -> Option<VertexIndex<V>> {
+        self.entities.get(&id).map(|v| v.0)
     }
 
     pub fn entity(&self, vertex: VertexIndex<V>) -> &EntityRef<'a, V> {
@@ -332,19 +330,13 @@ where
         T: IntoEntityRef<'a, T = V>,
     {
         let er = entity.into_entity_ref();
-        if let Some(nx) = self.entities.get(er.id()) {
+        if let Some(nx) = self.entities.get(&er.id()) {
             nx.0
         } else {
             let id = er.id();
-            let loc = id.location().clone();
-            let gen = id.generation();
+            let nx = self.entity_graph.add_node(id).into();
 
-            let nx = self.entity_graph.add_node(id.clone()).into();
-
-            self.entities.insert(id.clone(), (nx, er));
-
-            let ngen = self.entity_versions.entry(loc).or_default();
-            *ngen = gen.max(*ngen);
+            self.entities.insert(id, (nx, er));
 
             nx
         }
@@ -359,18 +351,13 @@ where
     where
         T: IntoEntityRef<'a, T = V>,
     {
-        let mut er = entity.into_entity_ref();
+        let er = entity.into_entity_ref();
+        let ner = Entity::new(er.id().tag(), er.into_owned().into_value());
 
-        let loc = er.id().location().clone();
-        let ngen = self.entity_versions.entry(loc).or_default();
-        *ngen += 1;
+        let id = ner.id();
+        let nx = self.entity_graph.add_node(id).into();
 
-        *er.to_mut().id_mut().generation_mut() = *ngen;
-
-        let id = er.id().clone();
-        let nx = self.entity_graph.add_node(id.clone()).into();
-
-        self.entities.insert(id, (nx, er));
+        self.entities.insert(id, (nx, ner.into_entity_ref()));
 
         nx
     }
@@ -1417,7 +1404,7 @@ impl<'g, 'a, V, E> Iterator for PostOrderIter<'g, 'a, V, E>
 where
     V: Clone,
 {
-    type Item = (&'g EntityId, VertexIndex<V>, &'g EntityRef<'a, V>);
+    type Item = (&'g Id<V>, VertexIndex<V>, &'g EntityRef<'a, V>);
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -1519,7 +1506,7 @@ impl<'g, 'a, V, E> Iterator for RevPostOrderIter<'g, 'a, V, E>
 where
     V: Clone,
 {
-    type Item = (&'g EntityId, VertexIndex<V>, &'g EntityRef<'a, V>);
+    type Item = (&'g Id<V>, VertexIndex<V>, &'g EntityRef<'a, V>);
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -1556,7 +1543,7 @@ where
     V: Clone,
 {
     graph: &'g EntityGraph<'a, V, E>,
-    eiter: indexmap::map::Iter<'g, EntityId, (VertexIndex<V>, EntityRef<'a, V>)>,
+    eiter: indexmap::map::Iter<'g, Id<V>, (VertexIndex<V>, EntityRef<'a, V>)>,
 }
 
 impl<'g, 'a, V, E> EntityRefIter<'g, 'a, V, E>
@@ -1575,7 +1562,7 @@ impl<'g, 'a, V, E> Iterator for EntityRefIter<'g, 'a, V, E>
 where
     V: Clone,
 {
-    type Item = (&'g EntityId, VertexIndex<V>, &'g EntityRef<'a, V>);
+    type Item = (&'g Id<V>, VertexIndex<V>, &'g EntityRef<'a, V>);
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -1593,11 +1580,11 @@ where
     V: Clone,
 {
     graph: &'g EntityGraph<'a, V, E>,
-    eiter: indexmap::map::Iter<'g, EntityId, (VertexIndex<V>, EntityRef<'a, V>)>,
+    eiter: indexmap::map::Iter<'g, Id<V>, (VertexIndex<V>, EntityRef<'a, V>)>,
     fiter: Box<
         dyn Fn(
                 &'g EntityGraph<'a, V, E>,
-                &'g EntityId,
+                &'g Id<V>,
                 VertexIndex<V>,
                 &'g EntityRef<'a, V>,
             ) -> bool
@@ -1613,7 +1600,7 @@ where
     where
         F: Fn(
                 &'g EntityGraph<'a, V, E>,
-                &'g EntityId,
+                &'g Id<V>,
                 VertexIndex<V>,
                 &'g EntityRef<'a, V>,
             ) -> bool
@@ -1631,7 +1618,7 @@ impl<'g, 'a, V, E> Iterator for EntityRefIterFiltered<'g, 'a, V, E>
 where
     V: Clone,
 {
-    type Item = (&'g EntityId, VertexIndex<V>, &'g EntityRef<'a, V>);
+    type Item = (&'g Id<V>, VertexIndex<V>, &'g EntityRef<'a, V>);
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -1653,7 +1640,7 @@ pub struct EntityRefIterMut<'g, 'a, V, E>
 where
     V: Clone,
 {
-    eiter: EntityIterMutInner<'g, EntityId, (VertexIndex<V>, EntityRef<'a, V>)>,
+    eiter: EntityIterMutInner<'g, Id<V>, (VertexIndex<V>, EntityRef<'a, V>)>,
     marker: PhantomData<&'g E>,
 }
 
@@ -1673,7 +1660,7 @@ impl<'g, 'a, V, E> Iterator for EntityRefIterMut<'g, 'a, V, E>
 where
     V: Clone,
 {
-    type Item = (&'g EntityId, VertexIndex<V>, &'g mut EntityRef<'a, V>);
+    type Item = (&'g Id<V>, VertexIndex<V>, &'g mut EntityRef<'a, V>);
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -1693,7 +1680,7 @@ where
     V: Clone,
 {
     graph: &'g EntityGraph<'a, V, E>,
-    eiter: indexmap::set::Iter<'g, (EntityId, VertexIndex<V>)>,
+    eiter: indexmap::set::Iter<'g, (Id<V>, VertexIndex<V>)>,
 }
 
 impl<'g, 'a, V, E> EntityRootOrLeafIter<'g, 'a, V, E>
@@ -1719,7 +1706,7 @@ impl<'g, 'a, V, E> Iterator for EntityRootOrLeafIter<'g, 'a, V, E>
 where
     V: Clone,
 {
-    type Item = (&'g EntityId, VertexIndex<V>, &'g EntityRef<'a, V>);
+    type Item = (&'g Id<V>, VertexIndex<V>, &'g EntityRef<'a, V>);
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
@@ -1802,21 +1789,19 @@ where
 mod test {
     use super::*;
     use crate::visualise::AsDot;
-    use fugue::ir::{AddressSpace, AddressValue};
 
     #[test]
     fn loop_sccs() {
         let mut graph = EntityGraph::<&'static str, ()>::new();
 
-        let spc = AddressSpace::constant("nodes", 0);
-        let mk_ent = |name: &'static str, loc: usize| -> Entity<&'static str> {
-            Entity::new("node", Location::new(AddressValue::new(&spc, 0), loc), name)
+        let mk_ent = |name: &'static str| -> Entity<&'static str> {
+            Entity::new("node", name)
         };
 
-        let a = mk_ent("A", 0);
-        let b = mk_ent("B", 1);
-        let c = mk_ent("C", 2);
-        let d = mk_ent("D", 3);
+        let a = mk_ent("A");
+        let b = mk_ent("B");
+        let c = mk_ent("C");
+        let d = mk_ent("D");
 
         graph.add_relation(&a, &b, ());
         graph.add_relation(&b, &a, ());
@@ -1835,19 +1820,18 @@ mod test {
     fn loop_test_nunroll() {
         let mut graph = EntityGraph::<&'static str, ()>::new();
 
-        let spc = AddressSpace::constant("nodes", 0);
-        let mk_ent = |name: &'static str, loc: usize| -> Entity<&'static str> {
-            Entity::new("node", Location::new(AddressValue::new(&spc, 0), loc), name)
+        let mk_ent = |name: &'static str| -> Entity<&'static str> {
+            Entity::new("node", name)
         };
 
-        let _z = mk_ent("Z", usize::MAX);
-        let b = mk_ent("B", 1);
-        let c = mk_ent("C", 2);
-        let a = mk_ent("A", 0);
-        let d = mk_ent("D", 3);
-        let e = mk_ent("E", 4);
-        let f = mk_ent("F", 5);
-        let g = mk_ent("G", 6);
+        let _z = mk_ent("Z");
+        let b = mk_ent("B");
+        let c = mk_ent("C");
+        let a = mk_ent("A");
+        let d = mk_ent("D");
+        let e = mk_ent("E");
+        let f = mk_ent("F");
+        let g = mk_ent("G");
 
         //graph.add_root_entity(&z);
         graph.add_root_entity(&a);
@@ -1920,18 +1904,17 @@ mod test {
     fn loop_test_unroll() {
         let mut graph = EntityGraph::<&'static str, ()>::new();
 
-        let spc = AddressSpace::constant("nodes", 0);
-        let mk_ent = |name: &'static str, loc: usize| -> Entity<&'static str> {
-            Entity::new("node", Location::new(AddressValue::new(&spc, 0), loc), name)
+        let mk_ent = |name: &'static str| -> Entity<&'static str> {
+            Entity::new("node", name)
         };
 
-        let b = mk_ent("B", 1);
-        let c = mk_ent("C", 2);
-        let a = mk_ent("A", 0);
-        let d = mk_ent("D", 3);
-        let e = mk_ent("E", 4);
-        let f = mk_ent("F", 5);
-        let g = mk_ent("G", 6);
+        let b = mk_ent("B");
+        let c = mk_ent("C");
+        let a = mk_ent("A");
+        let d = mk_ent("D");
+        let e = mk_ent("E");
+        let f = mk_ent("F");
+        let g = mk_ent("G");
 
         graph.add_root_entity(&a);
 

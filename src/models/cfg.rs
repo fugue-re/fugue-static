@@ -2,7 +2,7 @@ use std::fmt::{self, Debug, Display};
 use std::ops::{Deref, DerefMut};
 
 use crate::graphs::entity::{AsEntityGraph, AsEntityGraphMut, EntityGraph, VertexIndex};
-use crate::traits::IntoEntityRef;
+use crate::types::IntoEntityRef;
 
 #[derive(Debug, Copy, Clone)]
 pub enum BranchKind {

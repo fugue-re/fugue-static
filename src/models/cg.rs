@@ -1,25 +1,28 @@
-use fugue::ir::il::ecode::EntityId;
-
 use std::collections::HashSet;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
 use crate::models::Function;
 use crate::graphs::entity::{AsEntityGraph, AsEntityGraphMut, EntityGraph, VertexIndex};
-use crate::traits::IntoEntityRef;
-use crate::types::EntityRef;
+use crate::types::{Id, Identifiable, EntityRef, IntoEntityRef};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct CallVia(Option<EntityId>);
+pub struct CallVia<V>(Option<Id<V>>);
 
-impl Default for CallVia {
+impl<V> Clone for CallVia<V> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<V> Default for CallVia<V> {
     fn default() -> Self {
         Self(None)
     }
 }
 
-impl fmt::Display for CallVia {
+impl<V> fmt::Display for CallVia<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ref id) = &self.0 {
             write!(f, "calls via: {}", id)
@@ -29,55 +32,70 @@ impl fmt::Display for CallVia {
     }
 }
 
-impl From<Option<EntityId>> for CallVia {
-    fn from(v: Option<EntityId>) -> Self {
+impl<V> From<Option<Id<V>>> for CallVia<V> {
+    fn from(v: Option<Id<V>>) -> Self {
         Self(v)
     }
 }
 
-impl From<CallVia> for Option<EntityId> {
-    fn from(v: CallVia) -> Self {
+impl<V> From<CallVia<V>> for Option<Id<V>> {
+    fn from(v: CallVia<V>) -> Self {
         v.0
     }
 }
 
-#[derive(Clone, Default)]
-pub struct CG<'a> {
-    graph: EntityGraph<'a, Function, CallVia>,
+pub struct CG<'a, V> {
+    graph: EntityGraph<'a, Function, CallVia<V>>,
 }
 
-impl<'a> AsEntityGraph<'a, Function, CallVia> for CG<'a> {
-    fn entity_graph(&self) -> &EntityGraph<'a, Function, CallVia> {
+impl<'a, V> Clone for CG<'a, V> {
+    fn clone(&self) -> Self {
+        Self {
+            graph: self.graph.clone(),
+        }
+    }
+}
+
+impl<'a, V> Default for CG<'a, V> {
+    fn default() -> Self {
+        Self {
+            graph: EntityGraph::new()
+        }
+    }
+}
+
+impl<'a, V> AsEntityGraph<'a, Function, CallVia<V>> for CG<'a, V> {
+    fn entity_graph(&self) -> &EntityGraph<'a, Function, CallVia<V>> {
         &self.graph
     }
 }
 
-impl<'a> AsEntityGraphMut<'a, Function, CallVia> for CG<'a> {
-    fn entity_graph_mut(&mut self) -> &mut EntityGraph<'a, Function, CallVia> {
+impl<'a, V> AsEntityGraphMut<'a, Function, CallVia<V>> for CG<'a, V> {
+    fn entity_graph_mut(&mut self) -> &mut EntityGraph<'a, Function, CallVia<V>> {
         &mut self.graph
     }
 }
 
-impl<'a> Deref for CG<'a> {
-    type Target = EntityGraph<'a, Function, CallVia>;
+impl<'a, V> Deref for CG<'a, V> {
+    type Target = EntityGraph<'a, Function, CallVia<V>>;
 
     fn deref(&self) -> &Self::Target {
         &self.graph
     }
 }
 
-impl<'a> DerefMut for CG<'a> {
+impl<'a, V> DerefMut for CG<'a, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.graph
     }
 }
 
-impl<'a> CG<'a> {
+impl<'a, V> CG<'a, V> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn cloned<'b>(&self) -> CG<'b> {
+    pub fn cloned<'b>(&self) -> CG<'b, V> {
         CG { graph: self.graph.cloned() }
     }
 
@@ -86,17 +104,17 @@ impl<'a> CG<'a> {
         self.graph.add_entity(fcn)
     }
 
-    fn add_call_aux<F1, F2, V>(&mut self, src: F1, tgt: F2, via: V)
+    fn add_call_aux<F1, F2, T>(&mut self, src: F1, tgt: F2, via: T)
     where F1: IntoEntityRef<'a, T=Function>,
           F2: IntoEntityRef<'a, T=Function>,
-          V: Into<CallVia> {
+          T: Into<CallVia<V>> {
         let sx = self.add_function(src);
         let tx = self.add_function(tgt);
 
         self.graph.add_vertex_relation(sx, tx, via.into());
     }
 
-    fn called_from_aux(&self, function: &EntityId, bound: usize, called: &mut HashSet<EntityRef<'a, Function>>) {
+    fn called_from_aux(&self, function: Id<Function>, bound: usize, called: &mut HashSet<EntityRef<'a, Function>>) {
         if bound == 0 {
             return
         }
@@ -110,7 +128,7 @@ impl<'a> CG<'a> {
         }
     }
 
-    pub fn called_from(&self, function: &EntityId, bound: usize) -> HashSet<EntityRef<'a, Function>> {
+    pub fn called_from(&self, function: Id<Function>, bound: usize) -> HashSet<EntityRef<'a, Function>> {
         let mut called = HashSet::new();
         self.called_from_aux(function, bound, &mut called);
         called
@@ -160,7 +178,7 @@ impl<'a> CG<'a> {
         self.add_call_aux(src, tgt, None)
     }
 
-    pub fn add_call_via<F1, F2>(&mut self, src: F1, tgt: F2, via: EntityId)
+    pub fn add_call_via<F1, F2>(&mut self, src: F1, tgt: F2, via: Id<V>)
     where F1: IntoEntityRef<'a, T=Function>,
           F2: IntoEntityRef<'a, T=Function> {
         self.add_call_aux(src, tgt, Some(via))

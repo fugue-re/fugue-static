@@ -1,5 +1,5 @@
 pub mod block;
-pub use block::{Block, BlockLifter, BlockMapping};
+pub use block::{Block, BlockLifter};
 
 pub mod cdg;
 pub use cdg::CDG;
@@ -14,7 +14,10 @@ pub mod ddg;
 pub use ddg::DDG;
 
 pub mod function;
-pub use function::{Function, FunctionBuilder, FunctionLifter, FunctionMapping};
+pub use function::{Function, FunctionBuilder, FunctionLifter};
+
+pub mod phi;
+pub use phi::Phi;
 
 pub mod program;
 pub use program::Program;

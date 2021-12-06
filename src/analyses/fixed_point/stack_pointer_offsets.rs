@@ -13,7 +13,7 @@ use crate::models::cfg::BranchKind;
 use crate::models::{Block, CFG};
 use crate::traits::variables::SimpleVarSubst;
 use crate::traits::*;
-use crate::types::SimpleVar;
+use crate::types::{Locatable, SimpleVar};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StackPointerShift {
@@ -107,7 +107,6 @@ impl StackPointerOffset {
                 .root_entities()
                 .into_iter()
                 .map(|(_, _, b)| b.location())
-                .cloned()
                 .collect(),
         }
     }
@@ -137,7 +136,7 @@ impl<'ecode>
         current: Option<StackPointerBlockShift>,
     ) -> Result<StackPointerBlockShift, Self::Err> {
         // if an entry point to CFG then assume that SP == 0
-        let mut shift = if self.roots.contains(entity.location()) {
+        let mut shift = if self.roots.contains(&entity.location()) {
             current.unwrap_or_else(|| StackPointerBlockShift {
                 start: StackPointerShift::Shift(BitVec::zero(self.sp.bits())),
                 finish: StackPointerShift::Shift(BitVec::zero(self.sp.bits())),
@@ -156,7 +155,7 @@ impl<'ecode>
                 break;
             }
 
-            match op.value() {
+            match **op.value() {
                 Stmt::Assign(ref var, ref expr)
                     if SimpleVar::from(var) == SimpleVar::from(self.sp) =>
                 {

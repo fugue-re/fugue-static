@@ -4,11 +4,10 @@ use petgraph::dot::{Dot as DotRender, Config as DotConfig};
 use std::cell::RefCell;
 use std::marker::PhantomData;
 
-use fugue::ir::il::ecode::EntityId;
-
 use crate::graphs::entity::{AsEntityGraph, EntityGraph};
 use crate::models::block::Block;
 use crate::models::cfg::{BranchKind, CFG};
+use crate::types::{Id, Identifiable};
 
 // NOTE: this is a hack to get petgraph to render blocks nicely
 struct DisplayAlways<T: Display>(T);
@@ -39,7 +38,7 @@ pub trait AsDot<'a>: Sized {
 
     fn dot(&'a self) -> DotDisplay<'a, Self>;
     fn dot_with<VR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::V, VR, Self::E, ER, F, G, Self>
-        where F: FnMut(&'a EntityId, &'a Self::V) -> VR,
+        where F: FnMut(Id<Self::V>, &'a Self::V) -> VR,
               G: FnMut(&'a Self::E) -> ER,
               VR: Display + 'a,
               ER: Display + 'a;
@@ -54,7 +53,7 @@ impl<'a, 'e> AsDot<'a> for CFG<'e, Block> {
     }
 
     fn dot_with<VR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::V, VR, Self::E, ER, F, G, Self>
-        where F: FnMut(&'a EntityId, &'a Self::V) -> VR,
+        where F: FnMut(Id<Self::V>, &'a Self::V) -> VR,
               G: FnMut(&'a Self::E) -> ER,
               VR: Display + 'a,
               ER: Display + 'a {
@@ -89,7 +88,7 @@ impl<'a, 'e> Display for DotDisplay<'a, CFG<'e, Block>> {
 }
 
 impl<'a, 'e, VR, ER, F, G> Display for DotDisplayWith<'a, Block, VR, BranchKind, ER, F, G, CFG<'e, Block>>
-where F: FnMut(&'a EntityId, &'a Block) -> VR,
+where F: FnMut(Id<Block>, &'a Block) -> VR,
       G: FnMut(&'a BranchKind) -> ER,
       VR: Display + 'a,
       ER: Display + 'a {
@@ -127,7 +126,7 @@ where V: Clone + 'a,
     }
 
     fn dot_with<VR, ER, F, G>(&'a self, nf: F, ef: G) -> DotDisplayWith<'a, Self::V, VR, Self::E, ER, F, G, Self>
-        where F: FnMut(&'a EntityId, &'a V) -> VR,
+        where F: FnMut(Id<Self::V>, &'a V) -> VR,
               G: FnMut(&'a E) -> ER,
               VR: Display + 'a,
               ER: Display + 'a {
@@ -165,7 +164,7 @@ where V: Clone + Display + 'a,
 }
 
 impl<'a, V, VR, E, ER, F, G> Display for DotDisplayWith<'a, V, VR, E, ER, F, G, EntityGraph<'a, V, E>>
-where F: FnMut(&'a EntityId, &'a V) -> VR,
+where F: FnMut(Id<V>, &'a V) -> VR,
       G: FnMut(&'a E) -> ER,
       VR: Display + 'a,
       ER: Display + 'a,

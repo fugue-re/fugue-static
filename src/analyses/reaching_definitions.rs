@@ -1,16 +1,33 @@
 use crate::analyses::fixed_point::FixedPointForward;
-use crate::models::block::Block;
+use crate::models::{Block, Phi};
 use crate::traits::*;
-use crate::types::SimpleVar;
+use crate::types::{Identifiable, Locatable, LocatableId, SimpleVar};
 use crate::graphs::entity::AsEntityGraph;
 
-use fugue::ir::il::ecode::EntityId;
+use fugue::ir::il::ecode::Stmt;
 
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 
-pub type DefinitionMap<'ecode> = BTreeMap<SimpleVar<'ecode>, BTreeSet<Cow<'ecode, EntityId>>>;
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PhiOrStmt {
+    Phi(LocatableId<Phi>),
+    Stmt(LocatableId<Stmt>),
+}
+
+impl From<LocatableId<Phi>> for PhiOrStmt {
+    fn from(lid: LocatableId<Phi>) -> Self {
+        Self::Phi(lid)
+    }
+}
+
+impl From<LocatableId<Stmt>> for PhiOrStmt {
+    fn from(lid: LocatableId<Stmt>) -> Self {
+        Self::Stmt(lid)
+    }
+}
+
+pub type DefinitionMap<'ecode> = BTreeMap<SimpleVar<'ecode>, BTreeSet<PhiOrStmt>>;
 
 #[derive(Default)]
 pub struct ReachingDefinitions;
@@ -45,10 +62,10 @@ where E: 'ecode,
         let mut gen = BTreeMap::new();
         let mut lgen = BTreeSet::new();
 
-        for (lvar, _rvars) in block.phis() {
+        for phi in block.phis() {
             let mut eids = BTreeSet::new();
-            eids.insert(Cow::Owned(EntityId::new("phi", block.location().clone())));
-            gen.insert(SimpleVar::from(lvar), eids);
+            eids.insert(LocatableId::from_parts(phi.id().retype::<Phi>(), phi.location()).into());
+            gen.insert(SimpleVar::from(phi.var()), eids);
         }
 
         for op in block.operations() {
@@ -57,7 +74,7 @@ where E: 'ecode,
 
             for d in lgen.iter() {
                 let mut eids = BTreeSet::new();
-                eids.insert(Cow::Borrowed(op.id()));
+                eids.insert(LocatableId::from_parts(op.id().retype::<Stmt>(), op.location()).into());
                 gen.insert(SimpleVar::from(*d), eids);
             }
         }

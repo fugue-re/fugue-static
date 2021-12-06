@@ -66,9 +66,9 @@ where E: 'ecode,
         let mut lkill = OnlyLocals(BTreeSet::new());
         let mut lgen = OnlyLocals(BTreeSet::new());
 
-        for (lvar, rvars) in block.phis() {
-            kill.insert_ref(lvar);
-            for rvar in rvars {
+        for phi in block.phis() {
+            kill.insert_ref(phi.var());
+            for rvar in phi.assign() {
                 gen.insert_ref(rvar);
             }
         }

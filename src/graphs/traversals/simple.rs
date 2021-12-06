@@ -138,25 +138,23 @@ impl RevPostOrder {
 #[cfg(test)]
 mod test {
     use super::*;
-    use fugue::ir::il::ecode::{Entity, Location};
-    use fugue::ir::{AddressSpace, AddressValue};
+    use crate::types::Entity;
 
     #[test]
     fn post_order_traversal() {
         let mut graph = EntityGraph::<&'static str, ()>::new();
 
-        let spc = AddressSpace::constant("nodes", 0);
-        let mk_ent = |name: &'static str, loc: usize| -> Entity<&'static str> {
-            Entity::new("node", Location::new(AddressValue::new(&spc, 0), loc), name)
+        let mk_ent = |name: &'static str| -> Entity<&'static str> {
+            Entity::new("node", name)
         };
 
-        let a = mk_ent("A", 0);
-        let b = mk_ent("B", 1);
-        let c = mk_ent("C", 2);
-        let d = mk_ent("D", 3);
-        let e = mk_ent("E", 4);
-        let f = mk_ent("F", 5);
-        let g = mk_ent("G", 6);
+        let a = mk_ent("A");
+        let b = mk_ent("B");
+        let c = mk_ent("C");
+        let d = mk_ent("D");
+        let e = mk_ent("E");
+        let f = mk_ent("F");
+        let g = mk_ent("G");
 
         graph.add_root_entity(&a);
 
@@ -191,18 +189,17 @@ mod test {
         let mut graph = EntityGraph::<&'static str, ()>::new();
         let mut graph2 = EntityGraph::<&'static str, ()>::new();
 
-        let spc = AddressSpace::constant("nodes", 0);
-        let mk_ent = |name: &'static str, loc: usize| -> Entity<&'static str> {
-            Entity::new("node", Location::new(AddressValue::new(&spc, 0), loc), name)
+        let mk_ent = |name: &'static str| -> Entity<&'static str> {
+            Entity::new("node", name)
         };
 
-        let a = mk_ent("A", 0);
-        let b = mk_ent("B", 1);
-        let c = mk_ent("C", 2);
-        let d = mk_ent("D", 3);
-        let e = mk_ent("E", 4);
-        let f = mk_ent("F", 5);
-        let g = mk_ent("G", 6);
+        let a = mk_ent("A");
+        let b = mk_ent("B");
+        let c = mk_ent("C");
+        let d = mk_ent("D");
+        let e = mk_ent("E");
+        let f = mk_ent("F");
+        let g = mk_ent("G");
 
         graph.add_root_entity(&a);
         graph.add_leaf_entity(&g);

@@ -1116,7 +1116,7 @@ impl<'ecode> Rewriter<'ecode> {
             .zip(self.stmts.iter().map(|(v, _, e)| Self::into_stmt(translator, *v, e)));
 
         for (old, new) in it {
-            *old.value_mut() = new;
+            **old.value_mut() = new;
         }
     }
 

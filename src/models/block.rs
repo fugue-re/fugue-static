@@ -4,13 +4,14 @@ use std::fmt::{self, Debug, Display};
 use fugue::db::BasicBlock;
 
 use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::il::ecode::{BranchTarget, ECode, Entity, EntityId, Location, Stmt, Var};
+use fugue::ir::il::ecode::{BranchTarget, ECode, Location, Stmt, Var};
 use fugue::ir::Translator;
 
 use thiserror::Error;
 
+use crate::models::Phi;
 use crate::traits::*;
-use crate::types::EntityMap;
+use crate::types::{Id, Identifiable, Located, Locatable, LocatableId, LocationTarget, Entity, EntityIdMapping, EntityLocMapping, EntityRef};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -20,39 +21,33 @@ pub enum Error {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Block {
-    phis: Vec<(Var, Vec<Var>)>,
-    operations: Vec<Entity<Stmt>>,
-    next_blocks: Vec<EntityId>,
+    id: LocatableId<Block>,
+    phis: Vec<Entity<Located<Phi>>>,
+    operations: Vec<Entity<Located<Stmt>>>,
+    next_blocks: Vec<LocationTarget<Block>>,
+}
+
+impl Identifiable<Block> for Block {
+    fn id(&self) -> Id<Block> {
+        self.id.id()
+    }
+}
+
+impl Locatable for Block {
+    fn location(&self) -> Location {
+        self.id.location()
+    }
 }
 
 pub trait BlockMapping {
-    fn blocks(&self) -> &EntityMap<Block>;
-    fn blocks_mut(&mut self) -> &mut EntityMap<Block>;
-}
-
-impl BlockMapping for EntityMap<Block> {
-    fn blocks(&self) -> &EntityMap<Block> {
-        self
-    }
-
-    fn blocks_mut(&mut self) -> &mut EntityMap<Block> {
-        self
-    }
+    fn block_by_id(&self, id: Id<Block>) -> Option<EntityRef<Block>>;
+    fn block_by_location(&self, location: &Location) -> Option<EntityRef<Block>>;
 }
 
 impl Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (op, assign) in self.phis.iter() {
-            if assign.is_empty() {
-                // NOTE: should never happen
-                writeln!(f, "{} {} ← ϕ(<empty>)", self.location(), op)?;
-            } else {
-                write!(f, "{} {} ← ϕ({}", self.location(), op, assign[0])?;
-                for aop in &assign[1..] {
-                    write!(f, ", {}", aop)?;
-                }
-                writeln!(f, ")")?;
-            }
+        for phi in self.phis.iter() {
+            writeln!(f, "{} {}", phi.location(), **phi)?;
         }
 
         for stmt in self.operations.iter() {
@@ -71,17 +66,8 @@ pub struct BlockDisplay<'a> {
 impl<'a> Display for BlockDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let tr = Some(self.trans);
-        for (op, assign) in self.blk.phis.iter() {
-            if assign.is_empty() {
-                // NOTE: should never happen
-                writeln!(f, "{} {} ← ϕ(<empty>)", self.blk.location(), op.display(tr))?;
-            } else {
-                write!(f, "{} {} ← ϕ({}", self.blk.location(), op.display(tr), assign[0].display(tr))?;
-                for aop in &assign[1..] {
-                    write!(f, ", {}", aop.display(tr))?;
-                }
-                writeln!(f, ")")?;
-            }
+        for phi in self.blk.phis.iter() {
+            writeln!(f, "{} {}", phi.location(), **phi)?;
         }
 
         for stmt in self.blk.operations.iter() {
@@ -183,35 +169,42 @@ impl Block {
                 .drain(..)
                 .enumerate()
                 .map(|(offset, operation)| {
-                    Entity::new("stmt", Location::new(address.clone(), offset), operation)
+                    Entity::new("stmt", Located::new(Location::new(address.clone(), offset), operation))
                 })
                 .collect::<Vec<_>>();
 
             let mut local_blocks = Vec::with_capacity(local_targets.len() + 1);
-
-            let mut last_location = Location::new(address.clone() + ecode.length, 0);
+            let mut last_location = LocationTarget::from(Location::new(address.clone() + ecode.length, 0));
+            
+            // FIXME: this does not correctly construct next blocks!!
+            // FIXME: Should we document that this only caters for fall-through blocks?
+            // NOTE: see muexe-static: we handle many of these issues!
 
             for start in local_targets.into_iter() {
+                let lid = LocatableId::new("blk", Location::new(address.clone(), start));
                 let block = Block {
+                    id: lid,
                     operations: operations.split_off(start),
                     phis: Default::default(),
-                    next_blocks: vec![EntityId::new("blk", last_location)],
+                    next_blocks: vec![last_location],
                 };
-                last_location = block.location().clone();
-                local_blocks.push(Entity::new("blk", last_location.clone(), block));
+                last_location = block.id().into();
+                local_blocks.push(Entity::from_parts(block.id(), block));
             }
 
-            local_blocks.push(Entity::new(
-                "blk",
-                Location::new(address.clone(), 0),
+
+            let lid = LocatableId::new("blk", Location::new(address.clone(), 0));
+            local_blocks.push(Entity::from_parts(
+                lid.id(),
                 Block {
+                    id: lid,
                     operations: if operations.is_empty() {
-                        vec![Entity::new("stmt", Location::new(address, 0), Stmt::skip())]
+                        vec![Entity::new("stmt", Located::new(Location::new(address, 0), Stmt::skip()))]
                     } else {
                         operations
                     },
                     phis: Default::default(),
-                    next_blocks: vec![EntityId::new("blk", last_location)],
+                    next_blocks: vec![last_location],
                 },
             ));
 
@@ -223,7 +216,7 @@ impl Block {
         // Merge blocks that are not targets of other blocks
         for index in (1..blocks.len()).rev() {
             if !blocks[index - 1].value().last().value().is_branch()
-                && !targets.contains(blocks[index].location())
+                && !targets.contains(&blocks[index].location())
             {
                 let block = blocks.remove(index).into_value();
                 blocks[index - 1]
@@ -237,52 +230,60 @@ impl Block {
         Ok(blocks)
     }
 
-    pub fn location(&self) -> &Location {
-        self.first().location()
-    }
-
-    pub fn next_blocks(&self) -> impl Iterator<Item = &EntityId> {
+    pub fn next_blocks(&self) -> impl Iterator<Item = &LocationTarget<Block>> {
         self.next_blocks.iter()
     }
 
-    pub fn next_blocks_mut(&mut self) -> &mut Vec<EntityId> {
+    pub fn next_blocks_mut(&mut self) -> &mut Vec<LocationTarget<Block>> {
         &mut self.next_blocks
     }
-
-    pub fn next_locations(&self) -> impl Iterator<Item = &Location> {
-        self.next_blocks.iter().map(|b| b.location())
+    
+    pub fn next_block_entities<'a, M, C>(&self, mapping: &'a M) -> C
+    where M: 'a + EntityIdMapping<Block> + EntityLocMapping<Block>,
+          C: EntityRefCollector<'a, Block> {
+        let mut c = C::default();
+        self.next_block_entities_with(mapping, &mut c);
+        c
     }
 
-    pub fn first(&self) -> &Entity<Stmt> {
+    pub fn next_block_entities_with<'a, M, C>(&self, mapping: &'a M, collect: &mut C)
+    where M: 'a + EntityIdMapping<Block> + EntityLocMapping<Block>,
+          C: EntityRefCollector<'a, Block> {
+        for e in self.next_blocks.iter().filter_map(|tgt| tgt.resolve_with(mapping)) {
+            collect.insert(e);
+        }
+    }
+
+    pub fn first(&self) -> &Entity<Located<Stmt>> {
         &self.operations[0]
     }
 
-    pub fn first_mut(&mut self) -> &mut Entity<Stmt> {
+    pub fn first_mut(&mut self) -> &mut Entity<Located<Stmt>> {
         &mut self.operations[0]
     }
 
-    pub fn last(&self) -> &Entity<Stmt> {
+    pub fn last(&self) -> &Entity<Located<Stmt>> {
         &self.operations[self.operations.len() - 1]
     }
 
-    pub fn last_mut(&mut self) -> &mut Entity<Stmt> {
+    pub fn last_mut(&mut self) -> &mut Entity<Located<Stmt>> {
         let offset = self.operations.len() - 1;
         &mut self.operations[offset]
     }
 
-    pub fn phis(&self) -> &Vec<(Var, Vec<Var>)> {
+    pub fn phis(&self) -> &[Entity<Located<Phi>>] {
         &self.phis
     }
 
-    pub fn phis_mut(&mut self) -> &mut Vec<(Var, Vec<Var>)> {
+    pub fn phis_mut(&mut self) -> &mut Vec<Entity<Located<Phi>>> {
         &mut self.phis
     }
 
-    pub fn operations(&self) -> &[Entity<Stmt>] {
+    pub fn operations(&self) -> &[Entity<Located<Stmt>>] {
         &self.operations
     }
 
-    pub fn operations_mut(&mut self) -> &mut [Entity<Stmt>] {
+    pub fn operations_mut(&mut self) -> &mut [Entity<Located<Stmt>>] {
         &mut self.operations
     }
 
@@ -296,9 +297,9 @@ impl<'ecode> Variables<'ecode> for Block {
     where
         C: ValueRefCollector<'ecode, Var>,
     {
-        for (pvar, pvars) in self.phis.iter() {
-            vars.insert_ref(pvar);
-            for pvar in pvars.iter() {
+        for phi in self.phis.iter() {
+            vars.insert_ref(&phi.var());
+            for pvar in phi.assign().iter() {
                 vars.insert_ref(pvar);
             }
         }
@@ -312,9 +313,10 @@ impl<'ecode> Variables<'ecode> for Block {
     where
         C: ValueMutCollector<'ecode, Var>,
     {
-        for (pvar, pvars) in self.phis.iter_mut() {
-            vars.insert_mut(pvar);
-            for pvar in pvars.iter_mut() {
+        for phi in self.phis.iter_mut() {
+            let (v, vs) = phi.parts_mut();
+            vars.insert_mut(v);
+            for pvar in vs {
                 vars.insert_mut(pvar);
             }
         }
@@ -329,8 +331,8 @@ impl<'ecode> Variables<'ecode> for Block {
     where
         C: ValueRefCollector<'ecode, Var>,
     {
-        for (var, _) in self.phis.iter() {
-            defs.insert_ref(var);
+        for phi in self.phis.iter() {
+            defs.insert_ref(phi.var());
         }
 
         for stmt in self.operations.iter().map(|v| v.value()) {
@@ -354,9 +356,9 @@ impl<'ecode> Variables<'ecode> for Block {
         let mut ldefs = C::default();
         let mut luses = C::default();
 
-        for (lvar, rvars) in self.phis.iter() {
-            ldefs.insert_ref(lvar);
-            for rvar in rvars {
+        for phi in self.phis.iter() {
+            ldefs.insert_ref(phi.var());
+            for rvar in phi.assign() {
                 luses.insert_ref(rvar);
             }
         }
@@ -376,8 +378,8 @@ impl<'ecode> Variables<'ecode> for Block {
     where
         C: ValueMutCollector<'ecode, Var>,
     {
-        for (var, _) in self.phis.iter_mut() {
-            defs.insert_mut(var);
+        for phi in self.phis.iter_mut() {
+            defs.insert_mut(phi.var_mut());
         }
 
         for stmt in self.operations.iter_mut().map(|v| v.value_mut()) {
@@ -401,9 +403,10 @@ impl<'ecode> Variables<'ecode> for Block {
         let mut ldefs = C::default();
         let mut luses = C::default();
 
-        for (lvar, rvars) in self.phis.iter_mut() {
-            ldefs.insert_mut(lvar);
-            for rvar in rvars {
+        for phi in self.phis.iter_mut() {
+            let (v, vs) = phi.parts_mut();
+            ldefs.insert_mut(v);
+            for rvar in vs {
                 luses.insert_mut(rvar);
             }
         }

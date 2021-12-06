@@ -6,9 +6,9 @@ use fugue::ir::il::ecode::Var;
 
 use crate::graphs::algorithms::dominance::{Dominance, DominanceTree};
 use crate::graphs::entity::{AsEntityGraphMut, VertexIndex};
-use crate::models::Block;
+use crate::models::{Block, Phi};
 use crate::traits::Variables;
-use crate::types::SimpleVar;
+use crate::types::{Locatable, SimpleVar};
 
 type SSAMapping<'a> = HashMap<SimpleVar<'a>, usize>;
 
@@ -122,10 +122,10 @@ where G: AsEntityGraphMut<'ecode, Block, E> {
     // populate phi assignments for each block
     for (vx, mut phim) in phi_locs.into_iter() {
         let blk = g.entity_graph_mut().entity_mut(vx);
-        for (var, phin) in blk.to_mut().value_mut().phis_mut() {
-            let (_, mut ns) = phim.remove(&SimpleVar::from(var)).unwrap();
+        for phi in blk.to_mut().value_mut().phis_mut() {
+            let (_, mut ns) = phim.remove(&SimpleVar::from(*phi.var())).unwrap();
             ns.dedup(); // TODO: back to set?
-            *phin = ns;
+            *phi.assign_mut() = ns;
         }
     }
 }
@@ -148,7 +148,8 @@ fn transform_rename<'a, E, G>(
             for (var, _) in phi.iter() {
                 let generation = renamer.define(&mut gmapping, var.clone());
                 let nvar = var.with_generation(generation);
-                block.value_mut().phis_mut().push((nvar, Vec::new()));
+                let loc = block.location();
+                block.value_mut().phis_mut().push(Phi::new(loc, nvar, Vec::new()));
             }
         }
 

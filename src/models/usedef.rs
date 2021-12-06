@@ -1,4 +1,4 @@
-use fugue::ir::il::ecode::{Entity, Stmt, Var};
+use fugue::ir::il::ecode::{Stmt, Var};
 
 use std::collections::BTreeSet;
 
@@ -10,12 +10,12 @@ use petgraph::stable_graph::StableDiGraph;
 use crate::graphs::entity::{EdgeIndex, VertexIndex};
 use crate::models::Block;
 use crate::traits::*;
-use crate::types::EntityRef;
+use crate::types::{Entity, EntityRef, Located, IntoEntityRef};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LocalDependency<'a> {
     Phi(EntityRef<'a, Block>, usize),
-    Stmt(EntityRef<'a, Stmt>),
+    Stmt(EntityRef<'a, Located<Stmt>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -90,10 +90,10 @@ impl<'a> UseDefs<'a> {
     }
 
     pub fn add_block(&mut self, block: &'a Entity<Block>) {
-        for (i, (d, us)) in block.phis().iter().enumerate() {
-            for u in us {
+        for (i, phi) in block.phis().iter().enumerate() {
+            for u in phi.assign() {
                 let r = block.into_entity_ref();
-                self.add_use_def(*u, *d, LocalDependency::Phi(r, i));
+                self.add_use_def(*u, *phi.var(), LocalDependency::Phi(r, i));
             }
         }
 
@@ -115,7 +115,7 @@ impl<'a> UseDefs<'a> {
         }
     }
 
-    pub fn add_stmt(&mut self, stmt: &'a Entity<Stmt>) {
+    pub fn add_stmt(&mut self, stmt: &'a Entity<Located<Stmt>>) {
         let (ds, us) = stmt.defined_and_used_variables::<BTreeSet<_>>();
 
         for d in ds.iter() {

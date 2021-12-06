@@ -1,14 +1,11 @@
 pub mod collect;
-pub use collect::{ValueRefCollector, ValueMutCollector};
+pub use collect::{EntityRefCollector, ValueRefCollector, ValueMutCollector};
 
 pub mod interval;
 pub use interval::AsInterval;
 
 pub mod stmt;
 pub use stmt::StmtExt;
-
-pub mod entity;
-pub use entity::IntoEntityRef;
 
 pub mod variables;
 pub use variables::{Substitution, Substitutor, Variables};

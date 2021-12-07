@@ -8,7 +8,8 @@ use fugue::ir::il::ecode::{BranchTarget, ECode, Location, Stmt};
 
 use crate::models::cfg::{BranchKind, CFG};
 use crate::models::{Block, BlockLifter};
-use crate::traits::StmtExt;
+use crate::traits::{BlockOracle, StmtExt};
+use crate::traits::oracle::NullOracle;
 use crate::types::{Id, Identifiable, Locatable, LocatableId, Entity, EntityIdMapping, EntityLocMapping};
 
 use thiserror::Error;
@@ -58,6 +59,12 @@ impl Function {
 
     pub fn cfg<'db, M>(&self, mapping: &'db M) -> CFG<'db, Block>
     where M: 'db + EntityIdMapping<Block> + EntityLocMapping<Block> {
+        self.cfg_with(mapping, &NullOracle)
+    }
+
+    pub fn cfg_with<'db, M, O>(&self, mapping: &'db M, oracle: &O) -> CFG<'db, Block>
+    where M: 'db + EntityIdMapping<Block> + EntityLocMapping<Block>,
+          O: 'db + BlockOracle {
         let mut cfg = CFG::new();
         let mut succs = Vec::new();
 

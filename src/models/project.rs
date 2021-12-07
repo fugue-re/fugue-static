@@ -17,6 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
+use parking_lot::RwLock;
+
 use thiserror::Error;
 
 pub struct ProjectBuilder {
@@ -96,8 +98,8 @@ pub struct Project<'r> {
 
     memory: Memory<'r>,
 
-    blk_oracle: Option<Arc<dyn BlockOracle>>,
-    fcn_oracle: Option<Arc<dyn FunctionOracle>>,
+    blk_oracle: Option<Arc<RwLock<dyn BlockOracle>>>,
+    fcn_oracle: Option<Arc<RwLock<dyn FunctionOracle>>>,
     fcn_oracle_starts: BTreeSet<Location>,
     
     blks: BTreeMap<Id<Block>, Entity<Block>>,
@@ -136,12 +138,12 @@ impl<'r> Project<'r> {
     }
     
     pub fn set_block_oracle<O: BlockOracle + 'static>(&mut self, oracle: O) {
-        self.blk_oracle = Some(Arc::new(oracle))
+        self.blk_oracle = Some(Arc::new(RwLock::new(oracle)))
     }
 
     pub fn set_function_oracle<O: FunctionOracle + 'static>(&mut self, oracle: O) {
-        let oracle = Arc::new(oracle);
-        self.fcn_oracle_starts.extend(oracle.function_starts().into_iter());
+        let oracle = Arc::new(RwLock::new(oracle));
+        self.fcn_oracle_starts.extend(oracle.read().function_starts().into_iter());
         self.fcn_oracle = Some(oracle);
     }
     
@@ -166,7 +168,7 @@ impl<'r> Project<'r> {
             return Err(ProjectError::FunctionOracleInconsistent(location))
         }
         
-        let sym = self.fcn_oracle.as_ref().and_then(|o| o.function_symbol(&location))
+        let sym = self.fcn_oracle.as_ref().and_then(|o| o.read().function_symbol(&location))
             .unwrap_or_else(|| Cow::from(format!("sub_{}", location.address())));
 
         let mut fcn_builder = FunctionBuilder::new(
@@ -176,7 +178,7 @@ impl<'r> Project<'r> {
             &*sym,
         );
 
-        let blks = self.fcn_oracle.as_ref().and_then(|o| o.function_blocks(&location))
+        let blks = self.fcn_oracle.as_ref().and_then(|o| o.read().function_blocks(&location))
             .unwrap_or_default();
         
         for blk in blks.into_iter() {
@@ -184,7 +186,7 @@ impl<'r> Project<'r> {
             let basic_addr = Address::from(&*addr);
             let region = self.memory.find_region(&basic_addr)
                 .ok_or_else(|| ProjectError::BlockOracleUnmappedBounds(blk.clone()))?;
-            let size_hint = self.blk_oracle.as_ref().and_then(|o| o.block_size(&blk))
+            let size_hint = self.blk_oracle.as_ref().and_then(|o| o.read().block_size(&blk))
                 .ok_or_else(|| ProjectError::BlockOracleUnsized(blk.clone()))?;
 
             let bytes = region.view_bytes(&basic_addr, size_hint)?;
@@ -203,6 +205,11 @@ impl<'r> Project<'r> {
         
         let id = fcn.id();
         let loc = fcn.location();
+
+        if let Some(ref o) = self.fcn_oracle {
+            o.write().function_identity(&loc, id);
+        }
+        
         self.fcns.insert(id, fcn);
         self.fcns_to_locs.insert(id, loc.clone());
         self.locs_to_fcns.insert(loc, id);

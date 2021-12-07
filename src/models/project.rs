@@ -262,6 +262,42 @@ impl EntityLocMapping<Function> for Project {
     }
 }
 
+impl BlockOracle for Project {
+    fn block_size(&self, loc: &Location) -> Option<usize> {
+        self.blk_oracle.as_ref()?.read().block_size(loc)
+    }
+
+    fn block_succs(&self, loc: &Location) -> Option<Vec<Location>> {
+        self.blk_oracle.as_ref()?.read().block_succs(loc)
+    }
+    
+    fn block_identity(&mut self, loc: &Location, id: Id<Block>) {
+        if let Some(oracle) = self.blk_oracle.as_ref() {
+            oracle.write().block_identity(loc, id)
+        }
+    }
+}
+
+impl FunctionOracle for Project {
+    fn function_starts(&self, _translator: &Translator) -> Vec<Location> {
+        self.fcn_oracle_starts.iter().cloned().collect()
+    }
+    
+    fn function_symbol(&self, loc: &Location) -> Option<Cow<'static, str>> {
+        self.fcn_oracle.as_ref()?.read().function_symbol(loc)
+    }
+    
+    fn function_blocks(&self, loc: &Location) -> Option<Vec<Location>> {
+        self.fcn_oracle.as_ref()?.read().function_blocks(loc)
+    }
+    
+    fn function_identity(&mut self, loc: &Location, id: Id<Function>) {
+        if let Some(oracle) = self.fcn_oracle.as_ref() {
+            oracle.write().function_identity(loc, id)
+        }
+    }
+}
+
 impl Borrow<Translator> for Project {
     fn borrow(&self) -> &Translator {
         self.lifter.translator()

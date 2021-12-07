@@ -192,10 +192,16 @@ where V: Clone {
         self.graph.add_relation(s.clone(), t, BranchKind::Jump);
         self.graph.add_relation(s, f, BranchKind::Fall);
     }
-
+    
     pub fn add_jump<S, T>(&mut self, s: S, t: T)
     where S: IntoEntityRef<'a, T=V>,
           T: IntoEntityRef<'a, T=V> {
         self.graph.add_relation(s, t, BranchKind::Jump);
+    }
+
+    pub fn add_fall<S, T>(&mut self, s: S, t: T)
+    where S: IntoEntityRef<'a, T=V>,
+          T: IntoEntityRef<'a, T=V> {
+        self.graph.add_relation(s, t, BranchKind::Fall);
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use fugue::db;
 
@@ -10,7 +10,7 @@ use crate::models::cfg::{BranchKind, CFG};
 use crate::models::{Block, BlockLifter};
 use crate::traits::{BlockOracle, StmtExt};
 use crate::traits::oracle::NullOracle;
-use crate::types::{Id, Identifiable, Locatable, LocatableId, Entity, EntityIdMapping, EntityLocMapping};
+use crate::types::{Id, Identifiable, LocationTarget, Locatable, LocatableId, Entity, EntityIdMapping, EntityLocMapping};
 
 use thiserror::Error;
 
@@ -79,19 +79,52 @@ impl Function {
 
         for blkid in self.block_ids.keys() {
             let blk = &mapping.lookup_by_id(*blkid).expect("block exists");
-            match &**blk.value().last().value() {
-                Stmt::CBranch(_, BranchTarget::Location(ref location)) => {
-                    let tgt = &mapping.lookup_by_location::<Option<_>>(location).expect("block exists");
-                    if self.block_ids.contains_key(&tgt.id()) {
-                        let fall = blk.next_block_entities::<_, Option<_>>(mapping).unwrap();
-                        cfg.add_cond(blk, tgt, fall);
-                    }
+            let mut oracle_resolved = oracle.block_succs(&blk.location())
+                .unwrap_or_default()
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            
+            for known in blk.next_blocks() {
+                if let LocationTarget::Fixed(ref loc) = known {
+                    oracle_resolved.remove(loc);
                 }
-                Stmt::Branch(BranchTarget::Location(location)) => {
-                    let tgt = &mapping.lookup_by_location::<Option<_>>(location).expect("block exists");
-                    if self.block_ids.contains_key(&tgt.id()) {
-                        cfg.add_jump(blk, tgt);
-                    }
+            }
+
+            match &**blk.value().last().value() {
+                Stmt::CBranch(_, t) => match t {
+                    BranchTarget::Location(ref location) => {
+                        let tgt = &mapping.lookup_by_location::<Option<_>>(location).expect("block exists");
+                        if self.block_ids.contains_key(&tgt.id()) {
+                            let fall = blk.next_block_entities::<_, Option<_>>(mapping).unwrap();
+                            cfg.add_cond(blk, tgt, fall);
+                        }
+                    },
+                    BranchTarget::Computed(_) => {
+                        for location in oracle_resolved.into_iter() {
+                            let tgt = &mapping.lookup_by_location::<Option<_>>(&location).expect("block exists");
+                            if self.block_ids.contains_key(&tgt.id()) {
+                                cfg.add_jump(blk, tgt);
+                            }
+                        }
+                        let fall = blk.next_block_entities::<_, Option<_>>(mapping).unwrap();
+                        cfg.add_fall(blk, fall);
+                    },
+                }
+                Stmt::Branch(t) => match t {
+                    BranchTarget::Location(ref location) => {
+                        let tgt = &mapping.lookup_by_location::<Option<_>>(location).expect("block exists");
+                        if self.block_ids.contains_key(&tgt.id()) {
+                            cfg.add_jump(blk, tgt);
+                        }
+                    },
+                    BranchTarget::Computed(_) => {
+                        for location in oracle_resolved.into_iter() {
+                            let tgt = &mapping.lookup_by_location::<Option<_>>(&location).expect("block exists");
+                            if self.block_ids.contains_key(&tgt.id()) {
+                                cfg.add_jump(blk, tgt);
+                            }
+                        }
+                    },
                 }
                 _ => (),
             }

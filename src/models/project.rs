@@ -143,7 +143,7 @@ impl<'r> Project<'r> {
 
     pub fn set_function_oracle<O: FunctionOracle + 'static>(&mut self, oracle: O) {
         let oracle = Arc::new(RwLock::new(oracle));
-        self.fcn_oracle_starts.extend(oracle.read().function_starts().into_iter());
+        self.fcn_oracle_starts.extend(oracle.read().function_starts(self.lifter.translator()).into_iter());
         self.fcn_oracle = Some(oracle);
     }
     
@@ -198,6 +198,11 @@ impl<'r> Project<'r> {
         for blk in blks {
             let id = blk.id();
             let loc = blk.location();
+
+            if let Some(ref o) = self.blk_oracle {
+                o.write().block_identity(&loc, id);
+            }
+
             self.blks.insert(id, blk);
             self.blks_to_locs.insert(id, loc.clone());
             self.locs_to_blks.entry(loc).or_default().insert(id);

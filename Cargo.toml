@@ -1,6 +1,6 @@
 [package]
 name = "fugue-static"
-version = "0.2.34"
+version = "0.2.35"
 authors = ["Sam Thomas <st@xv.ax>"]
 edition = "2018"
 

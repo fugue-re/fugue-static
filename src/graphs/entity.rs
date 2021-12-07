@@ -168,6 +168,26 @@ pub trait VisitEntityGraph<'a, V, E> {
 
 impl<'a, V, E> EntityGraph<'a, V, E>
 where
+    E: Clone + 'static,
+    V: Clone + 'static,
+{
+    pub fn owned(&self) -> EntityGraph<'static, V, E> {
+        EntityGraph {
+            entity_graph: self.entity_graph.clone(),
+            entity_roots: self.entity_roots.clone(),
+            entity_leaves: self.entity_leaves.clone(),
+            entities: self
+                .entities
+                .iter()
+                .map(|(id, (vx, v))| (id.clone(), (*vx, Cow::Owned(v.as_ref().clone()))))
+                .collect(),
+            entity_versions: self.entity_versions.clone(),
+        }
+    }
+}
+
+impl<'a, V, E> EntityGraph<'a, V, E>
+where
     E: Clone,
     V: Clone,
 {

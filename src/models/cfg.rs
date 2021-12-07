@@ -84,6 +84,14 @@ where V: Clone {
     }
 }
 
+impl<'a, V> CFG<'a, V> where V: 'static + Clone {
+    pub fn owned(&self) -> CFG<'static, V> {
+        CFG {
+            graph: self.graph.owned()
+        }
+    }
+}
+
 impl<'a, V> CFG<'a, V>
 where V: Clone {
     pub fn new() -> Self {

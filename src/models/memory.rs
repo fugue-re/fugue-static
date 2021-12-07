@@ -16,11 +16,11 @@ use intervals::collections::IntervalMap;
 use crate::types::{Entity, EntityRef, Id, Identifiable};
 
 #[derive(Clone)]
-pub struct Region<'r> {
+pub struct Region {
     name: Arc<str>,
     range: Interval<Address>,
     endian: Endian,
-    bytes: Cow<'r, [u8]>,
+    bytes: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
@@ -33,13 +33,13 @@ pub enum RegionIOError {
     OOBWrite(Arc<str>),
 }
 
-impl<'r> Region<'r> {
+impl Region {
     pub fn new_with(
         id: Id<Self>,
         name: impl Into<Arc<str>>,
         addr: impl Into<Address>,
         endian: Endian,
-        bytes: impl Into<Cow<'r, [u8]>>,
+        bytes: impl Into<Vec<u8>>,
     ) -> Entity<Self> {
         let address = addr.into();
         let bytes = bytes.into();
@@ -71,7 +71,7 @@ impl<'r> Region<'r> {
         name: impl Into<Arc<str>>,
         addr: impl Into<Address>,
         endian: Endian,
-        bytes: impl Into<Cow<'r, [u8]>>,
+        bytes: impl Into<Vec<u8>>,
     ) -> Entity<Self> {
         Self::new_with(Id::new("region"), name, addr, endian, bytes)
     }
@@ -94,7 +94,7 @@ impl<'r> Region<'r> {
     }
 
     pub fn bytes_mut(&mut self) -> &mut [u8] {
-        self.bytes.to_mut()
+        &mut self.bytes
     }
     pub fn contains_range(&self, address: impl Borrow<Address>, count: usize) -> bool {
         let address = address.borrow();
@@ -218,7 +218,7 @@ impl<'r> Region<'r> {
             .ok_or_else(|| RegionIOError::Range(self.name.clone()))?
             as usize;
 
-        Ok(&mut self.bytes.to_mut()[offset..])
+        Ok(&mut self.bytes[offset..])
     }
 
     pub fn view_bytes(
@@ -260,19 +260,19 @@ impl<'r> Region<'r> {
 }
 
 #[derive(Clone)]
-pub struct Memory<'r> {
-    id: Id<Memory<'r>>,
+pub struct Memory {
+    id: Id<Memory>,
     name: Cow<'static, str>,
-    mapping: IntervalMap<Address, Entity<Region<'r>>>,
+    mapping: IntervalMap<Address, Entity<Region>>,
 }
 
-impl<'r> Identifiable<Memory<'r>> for Memory<'r> {
+impl Identifiable<Memory> for Memory {
     fn id(&self) -> Id<Self> {
         self.id
     }
 }
 
-impl<'r> Memory<'r> {
+impl Memory {
     pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
         Self {
             id: Id::new("mem"),
@@ -285,15 +285,15 @@ impl<'r> Memory<'r> {
         Cow::Borrowed(&*self.name)
     }
     
-    pub fn add_region(&mut self, region: Entity<Region<'r>>) {
+    pub fn add_region(&mut self, region: Entity<Region>) {
         self.mapping.insert(region.interval().clone(), region);
     }
     
-    pub fn find_region(&self, addr: &Address) -> Option<EntityRef<Region<'r>>> {
+    pub fn find_region(&self, addr: &Address) -> Option<EntityRef<Region>> {
         self.mapping.find_point(addr).map(|iv| EntityRef::Borrowed(iv.value()))
     }
     
-    pub fn regions(&self) -> &IntervalMap<Address, Entity<Region<'r>>> {
+    pub fn regions(&self) -> &IntervalMap<Address, Entity<Region>> {
         &self.mapping
     }
 }

@@ -47,19 +47,19 @@ impl ProjectBuilder {
         })
     }
 
-    pub fn project<'r>(
+    pub fn project(
         &self,
         name: impl Into<Cow<'static, str>>,
         arch: impl Into<Cow<'static, str>>,
         convention: impl AsRef<str>,
-    ) -> Result<Entity<Project<'r>>, ProjectBuilderError> {
+    ) -> Result<Entity<Project>, ProjectBuilderError> {
         Ok(Project::new(
             name,
             self.lifter_builder.build(arch, convention)?,
         ))
     }
 
-    pub fn project_with<'r>(
+    pub fn project_with(
         &self,
         name: impl Into<Cow<'static, str>>,
         processor: impl AsRef<str>,
@@ -67,7 +67,7 @@ impl ProjectBuilder {
         bits: u32,
         variant: impl AsRef<str>,
         convention: impl AsRef<str>,
-    ) -> Result<Entity<Project<'r>>, ProjectBuilderError> {
+    ) -> Result<Entity<Project>, ProjectBuilderError> {
         Ok(Project::new(
             name,
             self.lifter_builder.build_with(processor, endian, bits, variant, convention)?,
@@ -90,13 +90,13 @@ pub enum ProjectError {
 }
 
 #[derive(Clone)]
-pub struct Project<'r> {
+pub struct Project {
     name: Cow<'static, str>,
 
     lifter: Lifter,
     disassembly_context: ContextDatabase,
 
-    memory: Memory<'r>,
+    memory: Memory,
 
     blk_oracle: Option<Arc<RwLock<dyn BlockOracle>>>,
     fcn_oracle: Option<Arc<RwLock<dyn FunctionOracle>>>,
@@ -112,7 +112,7 @@ pub struct Project<'r> {
     syms_to_fcns: BTreeMap<Cow<'static, str>, Id<Function>>,
 }
 
-impl<'r> Project<'r> {
+impl Project {
     pub fn new(name: impl Into<Cow<'static, str>>, lifter: Lifter) -> Entity<Self> {
         Entity::new("project", Self {
             name: name.into(),
@@ -147,7 +147,7 @@ impl<'r> Project<'r> {
         self.fcn_oracle = Some(oracle);
     }
     
-    pub fn add_region_mapping(&mut self, region: Entity<Region<'r>>) {
+    pub fn add_region_mapping(&mut self, region: Entity<Region>) {
         self.memory.add_region(region);
     }
 
@@ -156,7 +156,7 @@ impl<'r> Project<'r> {
         name: impl Into<Arc<str>>,
         addr: impl Into<Address>,
         endian: Endian,
-        bytes: impl Into<Cow<'r, [u8]>>,
+        bytes: impl Into<Vec<u8>>,
     ) {
         self.memory.add_region(Region::new(name, addr, endian, bytes));
     }
@@ -228,13 +228,13 @@ impl<'r> Project<'r> {
     }
 }
 
-impl<'r> EntityIdMapping<Block> for Project<'r> {
+impl EntityIdMapping<Block> for Project {
     fn lookup_by_id(&self, id: Id<Block>) -> Option<EntityRef<Block>> {
         self.blks.get(&id).map(Cow::Borrowed)
     }
 }
 
-impl<'r> EntityLocMapping<Block> for Project<'r> {
+impl EntityLocMapping<Block> for Project {
     fn lookup_by_location_with<'a, C: EntityRefCollector<'a, Block>>(&'a self, loc: &Location, collect: &mut C) {
         if let Some(ids) = self.locs_to_blks.get(loc) {
             for id in ids.iter() {
@@ -246,13 +246,13 @@ impl<'r> EntityLocMapping<Block> for Project<'r> {
     }
 }
 
-impl<'r> EntityIdMapping<Function> for Project<'r> {
+impl EntityIdMapping<Function> for Project {
     fn lookup_by_id(&self, id: Id<Function>) -> Option<EntityRef<Function>> {
         self.fcns.get(&id).map(Cow::Borrowed)
     }
 }
 
-impl<'r> EntityLocMapping<Function> for Project<'r> {
+impl EntityLocMapping<Function> for Project {
     fn lookup_by_location_with<'a, C: EntityRefCollector<'a, Function>>(&'a self, loc: &Location, collect: &mut C) {
         if let Some(id) = self.locs_to_fcns.get(loc) {
             if let Some(e) = self.lookup_by_id(*id) {
@@ -262,13 +262,13 @@ impl<'r> EntityLocMapping<Function> for Project<'r> {
     }
 }
 
-impl<'r> Borrow<Translator> for Project<'r> {
+impl Borrow<Translator> for Project {
     fn borrow(&self) -> &Translator {
         self.lifter.translator()
     }
 }
 
-impl<'r> Borrow<Translator> for &'_ Project<'r> {
+impl Borrow<Translator> for &'_ Project {
     fn borrow(&self) -> &Translator {
         self.lifter.translator()
     }

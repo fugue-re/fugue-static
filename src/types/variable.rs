@@ -5,7 +5,8 @@ use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
 use std::ops::{Deref, DerefMut};
 
-use interval_tree::{Interval, IntervalSet};
+use intervals::Interval;
+use intervals::collections::IntervalSet;
 
 use fugue::ir::Translator;
 use fugue::ir::il::ecode::Var;
@@ -141,7 +142,7 @@ impl VarView {
             Self(IntervalSet::from_iter(
                 t.registers()
                     .iter()
-                    .map(|((off, sz), _)| (Interval::from(*off..=(off + (*sz as u64) - 1)), ())),
+                    .map(|((off, sz), _)| Interval::from(*off..=(off + (*sz as u64) - 1))),
             ))
         )
     }
@@ -182,48 +183,17 @@ impl<'v> VarViews<'v> {
     pub fn merge(&mut self, other: VarViews) {
         for (spc, ivss) in other.0.into_iter().filter(|(s, _)| !s.is_register()) {
             let ivsd = self.0.entry(spc).or_default();
-            ivsd.to_mut().extend(ivss.iter().map(|(k, _)| (k, ())));
+            ivsd.to_mut().extend(ivss.iter());
         }
     }
 
     pub fn insert<'a, V: Into<SimpleVar<'a>>>(&mut self, var: V) {
         let (space, iv) = Self::interval(var);
-        self.0.entry(space).or_default().to_mut().insert(iv, ());
+        self.0.entry(space).or_default().to_mut().insert(iv);
     }
 
     pub fn reset(&mut self) {
         self.0.retain(|s, _| s.is_register())
-    }
-
-    pub fn replace_overlaps<'a, 'b, V: Into<SimpleVar<'a>>>(
-        &mut self,
-        var: V,
-    ) -> Vec<SimpleVar<'b>> {
-        let var = var.into();
-        let overlaps = self.take_overlaps(&var);
-        self.insert(var);
-        overlaps
-    }
-
-    pub fn take_overlaps<'a, 'b, V: Into<SimpleVar<'a>>>(&mut self, var: V) -> Vec<SimpleVar<'b>> {
-        let var = var.into();
-        let (space, iv) = Self::interval(&var);
-        if let Some(ivs) = self.0.get_mut(&space) {
-            ivs.to_mut()
-                .take_overlaps(iv)
-                .into_iter()
-                .map(|(iv, _)| {
-                    SimpleVar::from(Var::new(
-                        space,
-                        *iv.start(),
-                        8 * (1 + *iv.end() - *iv.start()) as usize,
-                        var.generation(),
-                    ))
-                })
-                .collect()
-        } else {
-            Vec::new()
-        }
     }
 
     pub fn remove_overlaps<'a, V: Into<SimpleVar<'a>>>(&mut self, var: V) {

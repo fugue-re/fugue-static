@@ -5,6 +5,7 @@ use crate::graphs::entity::{AsEntityGraph, AsEntityGraphMut, EntityGraph, Vertex
 use crate::types::IntoEntityRef;
 
 #[derive(Debug, Copy, Clone)]
+#[derive(serde::Deserialize, serde::Serialize)]
 pub enum BranchKind {
     Call,
     Fall,

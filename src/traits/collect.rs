@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::collections::{BTreeMap, HashMap};
 
-use interval_tree::{IntervalMap, IntervalSet};
+use intervals::collections::{IntervalMap, IntervalSet};
 
 use std::hash::Hash;
 
@@ -280,7 +280,7 @@ impl<'ecode, V, I> ValueRefCollector<'ecode, V> for IntervalSet<I> where V: AsIn
     #[inline(always)]
     fn insert_ref(&mut self, var: &'ecode V) {
         let iv = var.as_interval();
-        self.insert(iv, ());
+        self.insert(iv);
     }
 
     #[inline(always)]
@@ -292,7 +292,7 @@ impl<'ecode, V, I> ValueRefCollector<'ecode, V> for IntervalSet<I> where V: AsIn
     #[inline(always)]
     fn retain_difference_ref(&mut self, other: &Self) {
         for iv in other.iter() {
-            self.remove_exact(iv.0)
+            self.remove_exact(iv);
         }
     }
 }

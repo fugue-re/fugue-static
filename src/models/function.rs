@@ -112,7 +112,7 @@ impl Function {
 
 pub struct FunctionBuilder<'trans> {
     translator: &'trans Translator,
-    context_db: ContextDatabase,
+    context_db: &'trans mut ContextDatabase,
     symbol: String,
     address: u64,
     block_indices: Vec<usize>,
@@ -120,10 +120,10 @@ pub struct FunctionBuilder<'trans> {
 }
 
 impl<'trans> FunctionBuilder<'trans> {
-    pub fn new(translator: &'trans Translator, address: u64, symbol: impl Into<String>) -> Self {
+    pub fn new(translator: &'trans Translator, context_db: &'trans mut ContextDatabase, address: u64, symbol: impl Into<String>) -> Self {
         Self {
             translator,
-            context_db: translator.context_database(),
+            context_db,
             symbol: symbol.into(),
             address,
             block_indices: Vec::new(),

@@ -1,4 +1,4 @@
-use interval_tree::Interval;
+use intervals::Interval;
 
 use fugue::ir::il::ecode::Var;
 

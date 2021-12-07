@@ -181,10 +181,6 @@ impl Block {
             let mut local_blocks = Vec::with_capacity(local_targets.len() + 1);
             let mut last_location = LocationTarget::from(Location::new(address.clone() + ecode.length, 0));
             
-            // FIXME: this does not correctly construct next blocks!!
-            // FIXME: Should we document that this only caters for fall-through blocks?
-            // NOTE: see muexe-static: we handle many of these issues!
-
             for start in local_targets.into_iter() {
                 let lid = LocatableId::new("blk", Location::new(address.clone(), start));
                 let block = Block {
@@ -235,10 +231,12 @@ impl Block {
         Ok(blocks)
     }
 
+    // next blocks are implicit flows due to fall-through behaviour
     pub fn next_blocks(&self) -> impl Iterator<Item = &LocationTarget<Block>> {
         self.next_blocks.iter()
     }
 
+    // next blocks are implicit flows due to fall-through behaviour
     pub fn next_blocks_mut(&mut self) -> &mut Vec<LocationTarget<Block>> {
         &mut self.next_blocks
     }

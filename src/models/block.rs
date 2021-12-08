@@ -183,30 +183,38 @@ impl Block {
             
             for start in local_targets.into_iter() {
                 let lid = LocatableId::new("blk", Location::new(address.clone(), start));
-                let block = Block {
+                let mut block = Block {
                     id: lid,
                     operations: operations.split_off(start),
                     phis: Default::default(),
-                    next_blocks: vec![last_location],
+                    next_blocks: Vec::default(),
                 };
+                if block.operations().last().map(|o| o.has_fall()).unwrap_or(true) {
+                    block.next_blocks.push(last_location);
+                }
                 last_location = block.id().into();
                 local_blocks.push(Entity::from_parts(block.id(), block));
             }
 
-
             let lid = LocatableId::new("blk", Location::new(address.clone(), 0));
             local_blocks.push(Entity::from_parts(
                 lid.id(),
-                Block {
-                    id: lid,
-                    operations: if operations.is_empty() {
-                        vec![Entity::new("stmt", Located::new(Location::new(address, 0), Stmt::skip()))]
-                    } else {
-                        operations
-                    },
-                    phis: Default::default(),
-                    next_blocks: vec![last_location],
-                },
+                {
+                    let mut block = Block {
+                        id: lid,
+                        operations: if operations.is_empty() {
+                            vec![Entity::new("stmt", Located::new(Location::new(address, 0), Stmt::skip()))]
+                        } else {
+                            operations
+                        },
+                        phis: Default::default(),
+                        next_blocks: Vec::default(),
+                    };
+                    if block.operations().last().map(|o| o.has_fall()).unwrap_or(true) {
+                        block.next_blocks.push(last_location);
+                    }
+                    block
+                }
             ));
 
             blocks.extend(local_blocks.into_iter().rev());

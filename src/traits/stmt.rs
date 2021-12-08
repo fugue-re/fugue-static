@@ -9,6 +9,7 @@ pub trait StmtExt {
     fn is_call(&self) -> bool;
     fn is_intrinsic(&self) -> bool;
     fn is_return(&self) -> bool;
+    fn has_fall(&self) -> bool;
 }
 
 impl StmtExt for Stmt {
@@ -35,6 +36,10 @@ impl StmtExt for Stmt {
 
     fn is_intrinsic(&self) -> bool {
         matches!(self, Stmt::Intrinsic(_, _))
+    }
+    
+    fn has_fall(&self) -> bool {
+        !matches!(self, Stmt::Branch(_) | Stmt::Return(_))
     }
 
     fn is_return(&self) -> bool {

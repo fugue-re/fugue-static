@@ -15,13 +15,13 @@ impl Display for Phi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.vars.is_empty() {
             // NOTE: should never happen
-            writeln!(f, "{} ← ϕ(<empty>)", self.var)?;
+            write!(f, "{} ← ϕ(<empty>)", self.var)?;
         } else {
             write!(f, "{} ← ϕ({}", self.var, self.vars[0])?;
             for aop in &self.vars[1..] {
                 write!(f, ", {}", aop)?;
             }
-            writeln!(f, ")")?;
+            write!(f, ")")?;
         }
         Ok(())
     }

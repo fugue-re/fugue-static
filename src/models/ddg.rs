@@ -10,9 +10,11 @@
 
 use std::collections::HashSet;
 
-use fugue::ir::il::ecode::{EntityId, Var};
+use fugue::ir::il::ecode::Var;
 
+use crate::models::Block;
 use crate::graphs::entity::{AsEntityGraph, AsEntityGraphMut, EntityGraph};
+use crate::types::Id;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DependenceKind {
@@ -29,7 +31,7 @@ pub struct Dependence {
 }
 
 #[derive(Debug, Clone)]
-pub struct PIBlock(HashSet<EntityId>); // SSC blocks -> do we need them?
+pub struct PIBlock(HashSet<Id<Block>>); // SSC blocks -> do we need them?
 
 #[derive(Clone)]
 pub struct DDG<'a, V> where V: Clone {

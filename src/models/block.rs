@@ -72,7 +72,7 @@ impl<'a> Display for BlockDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let tr = Some(self.trans);
         for phi in self.blk.phis.iter() {
-            writeln!(f, "{} {}", phi.location(), **phi)?;
+            writeln!(f, "{} {}", phi.location(), phi.display(self.trans))?;
         }
 
         for stmt in self.blk.operations.iter() {

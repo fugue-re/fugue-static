@@ -3,6 +3,7 @@ use crate::models::memory::{Memory, Region, RegionIOError};
 use crate::models::lifter::{Lifter, LifterBuilder, LifterBuilderError};
 use crate::models::function::{FunctionBuilder, Error as FunctionBuilderError};
 use crate::traits::EntityRefCollector;
+use crate::transforms::{NormaliseVariables, VariableNormaliser};
 use crate::types::{Entity, EntityIdMapping, EntityLocMapping, EntityRef, Id, Identifiable, Locatable};
 use crate::traits::oracle::*;
 
@@ -170,6 +171,8 @@ impl Project {
         let sym = self.fcn_oracle.as_ref().and_then(|o| o.read().function_symbol(&location))
             .unwrap_or_else(|| Cow::from(format!("sub_{}", location.address())));
 
+        let mut norm = VariableNormaliser::new_with(&*self, self.lifter().temporary_space_id());
+
         let mut fcn_builder = FunctionBuilder::new(
             self.lifter.translator(),
             &mut self.disassembly_context,
@@ -180,6 +183,7 @@ impl Project {
         let blks = self.fcn_oracle.as_ref().and_then(|o| o.read().function_blocks(&location))
             .unwrap_or_default();
 
+
         for blk in blks.into_iter() {
             let addr = blk.address();
             let basic_addr = Address::from(&*addr);
@@ -189,7 +193,7 @@ impl Project {
                 .ok_or_else(|| ProjectError::BlockOracleUnsized(blk.clone()))?;
 
             let bytes = region.view_bytes(&basic_addr, size_hint)?;
-            fcn_builder.add_block(blk.address().offset(), bytes)?;
+            fcn_builder.add_block_with(blk.address().offset(), bytes, |ecode| ecode.normalise_variables(&mut norm))?;
         }
 
         let (fcn, blks) = fcn_builder.build();

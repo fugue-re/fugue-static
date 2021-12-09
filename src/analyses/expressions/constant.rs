@@ -365,13 +365,14 @@ impl<'a, 'b> ConstPropagator<'a, 'b> {
     }
 
     pub fn propagate_block(&mut self, blk: &mut Block) {
-        for phi in blk.phis() {
+        'outer: for phi in blk.phis() {
             if !self.mapping.contains_key(phi.var()) {
                 let mut vsf = phi.assign().iter().map(|v| self.mapping.get(v));
                 if let Some(bv) = vsf.next().expect("non-empty phi assignment") {
                     for vn in vsf {
                         if !matches!(vn, Some(bvn) if bv == bvn) {
-                            continue
+                            // all need to be the same value!
+                            continue 'outer
                         }
                     }
                     let bv = bv.clone();

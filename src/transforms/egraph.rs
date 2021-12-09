@@ -123,7 +123,7 @@ impl Analysis<ECodeLanguage> for ConstantFolding {
     fn make(egraph: &EGraph<ECodeLanguage, Self>, enode: &ECodeLanguage) -> Self::Data {
         use ECodeLanguage as L;
         use std::ops::{Neg, Not};
-        use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Shl, Shr};
+        use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Shl, Shr, Sub};
 
         let bv = |eid: &Id| egraph[*eid].data.as_ref();
         match enode {
@@ -199,6 +199,7 @@ impl Analysis<ECodeLanguage> for ConstantFolding {
             // binary ops
             L::And([lhs, rhs]) => Some(bv(lhs)?.bitand(bv(rhs)?)),
             L::Add([lhs, rhs]) => Some(bv(lhs)?.add(bv(rhs)?)),
+            L::Sub([lhs, rhs]) => Some(bv(lhs)?.sub(bv(rhs)?)),
             L::Div([lhs, rhs]) => {
                 let rhs = bv(rhs)?;
                 if rhs.is_zero() {
@@ -278,16 +279,11 @@ impl<'ecode> Default for Rewriter<'ecode> {
     fn default() -> Self {
         let rules: Vec<Rewrite<ECodeLanguage, ConstantFolding>> = vec![
             rewrite!("and-self"; "(and ?a ?a)" => "?a"),
-            rewrite!("and-0"; "(and ?a (constant 0:1 ?sz))" => "(constant 0:1 ?sz)"),
 
             rewrite!("or-self"; "(or ?a ?a)" => "?a"),
-            rewrite!("xor-self"; "(xor (variable ?sp ?off ?sz ?gen) (variable ?sp ?off ?sz ?gen))" => "(constant 0 ?sz)"),
+            rewrite!("xor-self"; "(xor (variable ?sp ?off ?sz ?gen) (variable ?sp ?off ?sz ?gen))" => "(constant 0:1 ?sz)"),
 
             rewrite!("double-not"; "(not (not ?a))" => "?a"),
-
-            rewrite!("add-0"; "(add ?a (constant ?z ?sz))" => "?a"),
-            rewrite!("sub-0"; "(sub ?a (constant ?z ?sz))" => "?a"),
-            rewrite!("mul-0"; "(mul ?a (constant ?z ?sz))" => "(constant 0:1 ?sz)"),
 
             rewrite!("eq-t0"; "(eq ?a ?a)" => "(constant 1:8 8)"),
 
@@ -962,6 +958,17 @@ impl<'ecode> Rewriter<'ecode> {
             ),
 
             // misc
+            L::Load([src, sz, spc]) => {
+                let space = translator.manager()
+                    .spaces()[Self::into_value(nodes, (*spc).into()) as usize]
+                    .id();
+
+                Expr::Load(
+                    Box::new(Self::into_expr_aux(translator, nodes, (*src).into())),
+                    Self::into_value(nodes, (*sz).into()) as usize,
+                    space,
+                )
+            },
             L::IfElse([cond, texpr, fexpr]) => Expr::IfElse(
                 Box::new(Self::into_expr_aux(translator, nodes, (*cond).into())),
                 Box::new(Self::into_expr_aux(translator, nodes, (*texpr).into())),
@@ -1013,7 +1020,7 @@ impl<'ecode> Rewriter<'ecode> {
             },
             L::Variable(_) => Self::into_variable(translator, nodes, i).into(),
 
-            _ => panic!("language term at index {} is not an expression", i)
+            _ => panic!("language term {} at index {} is not an expression", node, i)
         }
     }
 

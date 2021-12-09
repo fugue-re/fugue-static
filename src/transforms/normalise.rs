@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::iter::FromIterator;
 
 use fugue::ir::{AddressSpaceId, Translator};
-use fugue::ir::il::ecode::{ECode, Expr, Stmt, Var};
+use fugue::ir::il::ecode::{ECode, ExprT, StmtT, Var};
 use fugue::ir::il::traits::*;
 
 use crate::models::{Block, CFG};
@@ -54,36 +54,38 @@ impl<'v> VariableAliasNormaliserVisitor<'v> {
 
     /// Assumes that svar.bits() != pvar.bits()
     /// Assumes that either svar completely contains pvar or pvar completely contains svar
-    fn resize_expr<E: Borrow<Expr>>(svar: &SimpleVar, pvar: &SimpleVar, expr: E) -> Expr {
+    fn resize_expr<Loc, Val, E: Borrow<ExprT<Loc, Val, Var>>>(svar: &SimpleVar, pvar: &SimpleVar, expr: E) -> ExprT<Loc, Val, Var>
+    where Loc: Clone,
+          Val: BitSize + Clone, {
         let expr = expr.borrow().clone();
 
         match svar.bits().cmp(&pvar.bits()) {
             Ordering::Greater => if svar.offset() == pvar.offset() { // truncate
                 // e.g svar: RAX, pvar: AL
-                Expr::extract_low(expr, pvar.bits())
+                ExprT::extract_low(expr, pvar.bits())
             } else {
                 // e.g. svar: RAX, pvar: AH
                 let loff = (pvar.offset() - svar.offset()) as usize * 8;
                 let moff = loff + pvar.bits();
-                Expr::extract(expr, loff, moff)
+                ExprT::extract(expr, loff, moff)
             },
             Ordering::Less => if svar.offset() == pvar.offset() {
                 // e.g. svar: AL, pvar: RAX
-                let hbits = Expr::extract_high(***pvar, pvar.bits() - svar.bits());
-                Expr::concat(hbits, expr)
+                let hbits = ExprT::extract_high(***pvar, pvar.bits() - svar.bits());
+                ExprT::concat(hbits, expr)
             } else {
                 if svar.offset() + (svar.bits() as u64 / 8) == (pvar.bits() as u64 / 8) {
                     // e.g. svar: AH, pvar: AX
-                    let lbits = Expr::extract_low(***pvar, pvar.bits() - svar.bits());
-                    Expr::concat(expr, lbits)
+                    let lbits = ExprT::extract_low(***pvar, pvar.bits() - svar.bits());
+                    ExprT::concat(expr, lbits)
                 } else {
                     // e.g. svar: AH, pvar: RAX
                     let shift = (svar.offset() - pvar.offset()) as usize * 8;
 
-                    let hbits = Expr::extract_high(***pvar, pvar.bits() - svar.bits() - shift);
-                    let lbits = Expr::extract_low(***pvar, shift);
+                    let hbits = ExprT::extract_high(***pvar, pvar.bits() - svar.bits() - shift);
+                    let lbits = ExprT::extract_low(***pvar, shift);
 
-                    Expr::concat(hbits, Expr::concat(expr, lbits))
+                    ExprT::concat(hbits, ExprT::concat(expr, lbits))
                 }
             },
             Ordering::Equal => expr,
@@ -101,7 +103,11 @@ impl VariableAliasNormaliser {
         }
     }
 
-    fn transform_stmt(&self, stmt: &mut Stmt) {
+    fn transform_stmt<Loc, Val>(&self, stmt: &mut StmtT<Loc, Val, Var>)
+    where
+        Loc: Clone,
+        Val: BitSize + Clone
+    {
         let mut classes = VarViews::from_space(
             self.register_space,
             &self.register_view,
@@ -174,48 +180,52 @@ impl VariableAliasNormaliser {
         view.merge(VarViews::from_iter(vars))
     }
 
-    fn stmt_variable_aliases<'v>(view: &mut VarViews<'v>, stmt: &Stmt) {
+    fn stmt_variable_aliases<'v, Loc, Val>(view: &mut VarViews<'v>, stmt: &StmtT<Loc, Val, Var>) {
         let vars = stmt.all_variables::<BTreeSet<_>>();
         view.merge(VarViews::from_iter(vars))
     }
 }
 
-impl<'ecode, 'v> VisitMut<'ecode> for VariableAliasNormaliserVisitor<'v> {
-    fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
+impl<'ecode, 'v, Loc, Val> VisitMut<'ecode, Loc, Val, Var> for VariableAliasNormaliserVisitor<'v>
+where
+    Loc: Clone,
+    Val: BitSize + Clone
+{
+    fn visit_expr_mut(&mut self, expr: &'ecode mut ExprT<Loc, Val, Var>) {
         match expr {
-            Expr::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
-            Expr::UnOp(op, ref mut expr) => self.visit_expr_unop_mut(*op, expr),
-            Expr::BinRel(op, ref mut lexpr, ref mut rexpr) => {
+            ExprT::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
+            ExprT::UnOp(op, ref mut expr) => self.visit_expr_unop_mut(*op, expr),
+            ExprT::BinRel(op, ref mut lexpr, ref mut rexpr) => {
                 self.visit_expr_binrel_mut(*op, lexpr, rexpr)
             }
-            Expr::BinOp(op, ref mut lexpr, ref mut rexpr) => {
+            ExprT::BinOp(op, ref mut lexpr, ref mut rexpr) => {
                 self.visit_expr_binop_mut(*op, lexpr, rexpr)
             }
-            Expr::Cast(ref mut expr, ref mut cast) => self.visit_expr_cast_mut(expr, cast),
-            Expr::Load(ref mut expr, size, space) => {
+            ExprT::Cast(ref mut expr, ref mut cast) => self.visit_expr_cast_mut(expr, cast),
+            ExprT::Load(ref mut expr, size, space) => {
                 self.visit_expr_load_mut(expr, *size, *space)
             }
-            Expr::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
-            Expr::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
-            Expr::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
-            Expr::Call(ref mut branch_target, ref mut args, bits) => {
+            ExprT::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
+            ExprT::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
+            ExprT::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
+            ExprT::Call(ref mut branch_target, ref mut args, bits) => {
                 self.visit_expr_call_mut(branch_target, args, *bits)
             }
-            Expr::Intrinsic(ref name, ref mut args, bits) => {
+            ExprT::Intrinsic(ref name, ref mut args, bits) => {
                 self.visit_expr_intrinsic_mut(name, args, *bits)
             }
-            Expr::Var(ref mut var) => if self.should_transform(var) {
+            ExprT::Var(ref mut var) => if self.should_transform(var) {
                 let svar = SimpleVar::from(&*var);
                 let pvar = self.classes.enclosing(&svar);
 
                 let rvar = **pvar;
-                *expr = Self::resize_expr(&pvar, &svar, Expr::from(rvar));
+                *expr = Self::resize_expr(&pvar, &svar, ExprT::from(rvar));
             },
-            Expr::Val(_) => (),
+            ExprT::Val(_) => (),
         }
     }
 
-    fn visit_stmt_assign_mut(&mut self, var: &'ecode mut Var, expr: &'ecode mut Expr) {
+    fn visit_stmt_assign_mut(&mut self, var: &'ecode mut Var, expr: &'ecode mut ExprT<Loc, Val, Var>) {
         if self.should_transform(var) {
             let svar = SimpleVar::from(&*var);
             let pvar = self.classes.enclosing(&svar);
@@ -234,7 +244,11 @@ pub trait NormaliseAliases {
     fn normalise_aliases(&mut self, n: &VariableAliasNormaliser);
 }
 
-impl NormaliseAliases for Stmt {
+impl<Loc, Val> NormaliseAliases for StmtT<Loc, Val, Var>
+where
+    Loc: Clone,
+    Val: BitSize + Clone,
+{
     fn normalise_aliases(&mut self, n: &VariableAliasNormaliser) {
         n.transform_stmt(self);
     }
@@ -271,7 +285,7 @@ impl VariableNormaliserVisitor {
     }
 }
 
-impl<'ecode> VisitMut<'ecode> for VariableNormaliserVisitor {
+impl<'ecode, Loc, Val> VisitMut<'ecode, Loc, Val, Var> for VariableNormaliserVisitor {
     fn visit_var_mut(&mut self, var: &'ecode mut Var) {
         if var.space().is_unique() {
             let mut unique_base = self.unique_base;
@@ -361,22 +375,22 @@ mod test {
         let mut s1 = Stmt::assign(ah, BitVec::from(0xffu8));
         s1.normalise_aliases(&avars);
 
-        assert!(is_set_var(&s1, rax) && is_set_exp(&s1, Expr::concat(Expr::extract_high(rax, 48), Expr::concat(BitVec::from(0xffu8), Expr::extract_low(rax, 8)))));
+        assert!(is_set_var(&s1, rax) && is_set_exp(&s1, ExprT::concat(ExprT::extract_high(rax, 48), ExprT::concat(BitVec::from(0xffu8), ExprT::extract_low(rax, 8)))));
 
         let mut s2 = Stmt::assign(al, BitVec::from(0xffu8));
         s2.normalise_aliases(&avars);
 
-        assert!(is_set_var(&s2, rax) && is_set_exp(&s2, Expr::concat(Expr::extract_high(rax, 56), BitVec::from(0xffu8))));
+        assert!(is_set_var(&s2, rax) && is_set_exp(&s2, ExprT::concat(ExprT::extract_high(rax, 56), BitVec::from(0xffu8))));
 
         let mut s3 = Stmt::assign(rax, BitVec::from(0xffu64));
         s3.normalise_aliases(&avars);
 
-        assert!(is_set_var(&s3, rax) && is_set_exp(&s3, Expr::from(BitVec::from(0xffu64))));
+        assert!(is_set_var(&s3, rax) && is_set_exp(&s3, ExprT::from(BitVec::from(0xffu64))));
 
         let mut s4 = Stmt::assign(ax, BitVec::from(0xffu16));
         s4.normalise_aliases(&avars);
 
-        assert!(is_set_var(&s4, rax) && is_set_exp(&s4, Expr::concat(Expr::extract_high(rax, 48), BitVec::from(0xffu16))));
+        assert!(is_set_var(&s4, rax) && is_set_exp(&s4, ExprT::concat(ExprT::extract_high(rax, 48), BitVec::from(0xffu16))));
 
         Ok(())
     }

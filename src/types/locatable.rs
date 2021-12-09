@@ -13,12 +13,24 @@ pub trait Locatable {
     fn location(&self) -> Location;
 }
 
+impl Locatable for Location {
+    fn location(&self) -> Location {
+        self.clone()
+    }
+}
+
 pub trait Relocatable: Locatable {
     fn relocate(&mut self, location: Location) {
         *self.location_mut() = location;
     }
 
     fn location_mut(&mut self) -> &mut Location;
+}
+
+impl Relocatable for Location {
+    fn location_mut(&mut self) -> &mut Location {
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -74,7 +86,7 @@ impl<V> Located<V> {
             value,
         }
     }
-    
+
     pub fn into_inner(self) -> V {
         self.value
     }
@@ -200,24 +212,24 @@ impl<T> LocationTarget<T> {
     pub fn new(target: impl Into<LocationTarget<T>>) -> Self {
         target.into()
     }
-    
+
     pub fn is_determined(&self) -> bool {
         self.is_fixed() || self.is_resolved()
     }
-    
+
     pub fn is_fixed(&self) -> bool {
         matches!(self, Self::Fixed(_))
     }
-    
+
     pub fn is_resolved(&self) -> bool {
         matches!(self, Self::Resolved(_))
     }
-    
+
     pub fn is_computed(&self) -> bool {
         matches!(self, Self::Computed(_, _))
     }
 }
-    
+
 impl<T> LocationTarget<T> where T: Clone {
     pub fn resolve_with<'a, M>(&self, mapping: &'a M) -> Option<EntityRef<'a, T>>
     where M: 'a + EntityIdMapping<T> + EntityLocMapping<T> {

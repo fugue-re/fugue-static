@@ -83,7 +83,7 @@ impl Function {
                 .unwrap_or_default()
                 .into_iter()
                 .collect::<BTreeSet<_>>();
-            
+
             for known in blk.next_blocks() {
                 if let LocationTarget::Fixed(ref loc) = known {
                     oracle_resolved.remove(loc);
@@ -205,12 +205,12 @@ impl<'trans> FunctionBuilder<'trans> {
     pub fn build(self) -> (Entity<Function>, Vec<Entity<Block>>) {
         let id = LocatableId::new("fcn", Location::new(self.translator.address(self.address), 0));
         let mut block_ids = HashMap::default();
-        
+
         for blk in self.blocks.iter() {
             let (id, loc) = LocatableId::from(blk).into_parts();
             block_ids.insert(id, loc);
         }
-        
+
         let f = Function {
             id,
             symbol: self.symbol,
@@ -218,7 +218,7 @@ impl<'trans> FunctionBuilder<'trans> {
             callers: HashMap::default(),
         };
         let blocks = self.blocks;
-        
+
         (f.into(), blocks)
     }
 }

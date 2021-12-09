@@ -1,5 +1,5 @@
 use std::marker::PhantomData;
-use fugue::ir::il::ecode::{Expr, Stmt, Var};
+use fugue::ir::il::ecode::{ExprT, StmtT};
 use crate::traits::{Variables, ValueRefCollector, ValueMutCollector, Visit, VisitMut};
 
 pub trait StmtExt {
@@ -12,93 +12,93 @@ pub trait StmtExt {
     fn has_fall(&self) -> bool;
 }
 
-impl StmtExt for Stmt {
+impl<Loc, Val, Var> StmtExt for StmtT<Loc, Val, Var> {
     fn is_branch(&self) -> bool {
         matches!(self,
-                 Stmt::Branch(_) |
-                 Stmt::CBranch(_, _) |
-                 Stmt::Call(_, _) |
-                 Stmt::Intrinsic(_, _) |
-                 Stmt::Return(_))
+                 StmtT::Branch(_) |
+                 StmtT::CBranch(_, _) |
+                 StmtT::Call(_, _) |
+                 StmtT::Intrinsic(_, _) |
+                 StmtT::Return(_))
     }
 
     fn is_jump(&self) -> bool {
-        matches!(self, Stmt::Branch(_) | Stmt::CBranch(_, _))
+        matches!(self, StmtT::Branch(_) | StmtT::CBranch(_, _))
     }
 
     fn is_cond(&self) -> bool {
-        matches!(self, Stmt::CBranch(_, _))
+        matches!(self, StmtT::CBranch(_, _))
     }
 
     fn is_call(&self) -> bool {
-        matches!(self, Stmt::Call(_, _))
+        matches!(self, StmtT::Call(_, _))
     }
 
     fn is_intrinsic(&self) -> bool {
-        matches!(self, Stmt::Intrinsic(_, _))
+        matches!(self, StmtT::Intrinsic(_, _))
     }
-    
+
     fn has_fall(&self) -> bool {
-        !matches!(self, Stmt::Branch(_) | Stmt::Return(_))
+        !matches!(self, StmtT::Branch(_) | StmtT::Return(_))
     }
 
     fn is_return(&self) -> bool {
-        matches!(self, Stmt::Return(_))
+        matches!(self, StmtT::Return(_))
     }
 }
 
-struct VisitVars<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode Var>);
-impl<'a, 'ecode, C> Visit<'ecode> for VisitVars<'a, 'ecode, C>
+struct VisitVars<'a, 'ecode, Var, C>(&'a mut C, PhantomData<&'ecode Var>);
+impl<'a, 'ecode, Loc, Val, Var, C> Visit<'ecode, Loc, Val, Var> for VisitVars<'a, 'ecode, Var, C>
 where C: ValueRefCollector<'ecode, Var> {
     fn visit_var(&mut self, var: &'ecode Var) {
         self.0.insert_ref(var);
     }
 }
 
-struct VisitVarsMut<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode Var>);
-impl<'a, 'ecode, C> VisitMut<'ecode> for VisitVarsMut<'a, 'ecode, C>
+struct VisitVarsMut<'a, 'ecode, Var, C>(&'a mut C, PhantomData<&'ecode Var>);
+impl<'a, 'ecode, Loc, Val, Var, C> VisitMut<'ecode, Loc, Val, Var> for VisitVarsMut<'a, 'ecode, Var, C>
 where C: ValueMutCollector<'ecode, Var> {
     fn visit_var_mut(&mut self, var: &'ecode mut Var) {
         self.0.insert_mut(var);
     }
 }
 
-struct VisitDefs<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode Var>);
-impl<'a, 'ecode, C> Visit<'ecode> for VisitDefs<'a, 'ecode, C>
+struct VisitDefs<'a, 'ecode, Var, C>(&'a mut C, PhantomData<&'ecode Var>);
+impl<'a, 'ecode, Loc, Val, Var, C> Visit<'ecode, Loc, Val, Var> for VisitDefs<'a, 'ecode, Var, C>
 where C: ValueRefCollector<'ecode, Var> {
-    fn visit_stmt_assign(&mut self, var: &'ecode Var, _expr: &'ecode Expr) {
+    fn visit_stmt_assign(&mut self, var: &'ecode Var, _expr: &'ecode ExprT<Loc, Val, Var>) {
         self.0.insert_ref(var);
     }
 }
 
-struct VisitDefsMut<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode mut Var>);
-impl<'a, 'ecode, C> VisitMut<'ecode> for VisitDefsMut<'a, 'ecode, C>
+struct VisitDefsMut<'a, 'ecode, Var, C>(&'a mut C, PhantomData<&'ecode mut Var>);
+impl<'a, 'ecode, Loc, Val, Var, C> VisitMut<'ecode, Loc, Val, Var> for VisitDefsMut<'a, 'ecode, Var, C>
 where C: ValueMutCollector<'ecode, Var> {
-    fn visit_stmt_assign_mut(&mut self, var: &'ecode mut Var, _expr: &'ecode mut Expr) {
+    fn visit_stmt_assign_mut(&mut self, var: &'ecode mut Var, _expr: &'ecode mut ExprT<Loc, Val, Var>) {
         self.0.insert_mut(var);
     }
 }
 
-struct VisitUses<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode Var>);
-impl<'a, 'ecode, C> Visit<'ecode> for VisitUses<'a, 'ecode, C>
+struct VisitUses<'a, 'ecode, Var, C>(&'a mut C, PhantomData<&'ecode Var>);
+impl<'a, 'ecode, Loc, Val, Var, C> Visit<'ecode, Loc, Val, Var> for VisitUses<'a, 'ecode, Var, C>
 where C: ValueRefCollector<'ecode, Var> {
     fn visit_expr_var(&mut self, var: &'ecode Var) {
         self.0.insert_ref(var);
     }
 }
 
-struct VisitUsesMut<'a, 'ecode, C>(&'a mut C, PhantomData<&'ecode mut Var>);
-impl<'a, 'ecode, C> VisitMut<'ecode> for VisitUsesMut<'a, 'ecode, C>
+struct VisitUsesMut<'a, 'ecode, Var, C>(&'a mut C, PhantomData<&'ecode mut Var>);
+impl<'a, 'ecode, Loc, Val, Var, C> VisitMut<'ecode, Loc, Val, Var> for VisitUsesMut<'a, 'ecode, Var, C>
 where C: ValueMutCollector<'ecode, Var> {
     fn visit_expr_var_mut(&mut self, var: &'ecode mut Var) {
         self.0.insert_mut(var);
     }
 }
 
-struct VisitDefUsesMut<'a, 'ecode, C>(&'a mut C, &'a mut C, PhantomData<&'ecode mut Var>);
-impl<'a, 'ecode, C> VisitMut<'ecode> for VisitDefUsesMut<'a, 'ecode, C>
+struct VisitDefUsesMut<'a, 'ecode, Var, C>(&'a mut C, &'a mut C, PhantomData<&'ecode mut Var>);
+impl<'a, 'ecode, Loc, Val, Var, C> VisitMut<'ecode, Loc, Val, Var> for VisitDefUsesMut<'a, 'ecode, Var, C>
 where C: ValueMutCollector<'ecode, Var> {
-    fn visit_stmt_assign_mut(&mut self, var: &'ecode mut Var, expr: &'ecode mut Expr) {
+    fn visit_stmt_assign_mut(&mut self, var: &'ecode mut Var, expr: &'ecode mut ExprT<Loc, Val, Var>) {
         // defs
         self.0.insert_mut(var);
         self.visit_expr_mut(expr);
@@ -110,7 +110,7 @@ where C: ValueMutCollector<'ecode, Var> {
     }
 }
 
-impl<'ecode> Variables<'ecode> for Stmt {
+impl<'ecode, Loc, Val, Var> Variables<'ecode, Var> for StmtT<Loc, Val, Var> {
     fn all_variables_with<C>(&'ecode self, vars: &mut C)
     where C: ValueRefCollector<'ecode, Var> {
         VisitVars(vars, PhantomData).visit_stmt(self)

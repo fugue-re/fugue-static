@@ -340,7 +340,7 @@ impl<'ecode> Rewriter<'ecode> {
     }
 }
 
-impl<'ecode> Visit<'ecode> for Rewriter<'ecode> {
+impl<'ecode> Visit<'ecode, Location, BitVec, Var> for Rewriter<'ecode> {
     fn visit_expr_var(&mut self, var: &'ecode Var) {
         use ECodeLanguage as L;
 

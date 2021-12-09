@@ -1,4 +1,5 @@
 use fugue::bv::BitVec;
+use fugue::ir::il::Location;
 use fugue::ir::il::ecode::{BinOp, BinRel, Cast, Expr, Stmt, UnOp, UnRel, Var};
 
 use std::borrow::Cow;
@@ -79,7 +80,7 @@ impl<'a, 'b> ConstEvaluator<'a, 'b> {
     }
 }
 
-impl<'ecode, 'a> Visit<'ecode> for ConstEvaluator<'ecode, 'a> {
+impl<'ecode, 'a> Visit<'ecode, Location, BitVec, Var> for ConstEvaluator<'ecode, 'a> {
     fn visit_expr_val(&mut self, bv: &'ecode BitVec) {
         self.set_value(bv);
     }
@@ -293,7 +294,7 @@ pub struct ConstFolder<'a, 'b> {
     mapping: Cow<'b, BTreeMap<Var, Cow<'a, BitVec>>>,
 }
 
-impl<'ecode, 'a> VisitMut<'ecode> for ConstFolder<'ecode, 'a> {
+impl<'ecode, 'a> VisitMut<'ecode, Location, BitVec, Var> for ConstFolder<'ecode, 'a> {
     fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
         let mut eval = ConstEvaluator {
             mapping: Cow::Borrowed(&*self.mapping),
@@ -313,7 +314,7 @@ pub struct ConstSubst<'a, 'b> {
     mapping: Cow<'b, BTreeMap<Var, Cow<'a, BitVec>>>,
 }
 
-impl<'ecode, 'a> VisitMut<'ecode> for ConstSubst<'ecode, 'a> {
+impl<'ecode, 'a> VisitMut<'ecode, Location, BitVec, Var> for ConstSubst<'ecode, 'a> {
     fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
         if let Expr::Var(var) = &*expr {
             if let Some(val) = self.mapping.get(var) {

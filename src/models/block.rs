@@ -1,18 +1,22 @@
 use std::collections::HashSet;
 use std::fmt::{self, Debug, Display};
 
+use fugue::bv::BitVec;
 use fugue::db::BasicBlock;
 
 use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::il::ecode::{BranchTarget, ECode, Location, Stmt, Var};
+use fugue::ir::il::ecode::{BranchTarget, ECode, Location, Stmt, StmtT, Var};
 use fugue::ir::il::traits::*;
 use fugue::ir::Translator;
 
 use thiserror::Error;
 
-use crate::models::Phi;
+use crate::models::PhiT;
 use crate::traits::*;
-use crate::types::{Id, Identifiable, Located, Locatable, LocatableId, LocationTarget, Entity, EntityIdMapping, EntityLocMapping, EntityRef};
+use crate::types::{
+    Entity, EntityIdMapping, EntityLocMapping, EntityRef, Id, Identifiable, Locatable, LocatableId,
+    Located, LocationTarget,
+};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -20,40 +24,75 @@ pub enum Error {
     Lifting(#[from] fugue::ir::error::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[derive(serde::Deserialize, serde::Serialize)]
-pub struct Block {
-    #[serde(bound(deserialize = "LocatableId<Block>: serde::Deserialize<'de>"))]
-    id: LocatableId<Block>,
-    #[serde(bound(deserialize = "Entity<Located<Phi>>: serde::Deserialize<'de>"))]
-    phis: Vec<Entity<Located<Phi>>>,
-    #[serde(bound(deserialize = "Entity<Located<Stmt>>: serde::Deserialize<'de>"))]
-    operations: Vec<Entity<Located<Stmt>>>,
-    #[serde(bound(deserialize = "LocationTarget<Block>: serde::Deserialize<'de>"))]
-    next_blocks: Vec<LocationTarget<Block>>,
+pub type Block = BlockT<Location, BitVec, Var>;
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Deserialize, serde::Serialize,
+)]
+pub struct BlockT<Loc, Val, Var>
+where
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone,
+{
+    #[serde(bound(deserialize = "LocatableId<BlockT<Loc, Val, Var>>: serde::Deserialize<'de>"))]
+    id: LocatableId<BlockT<Loc, Val, Var>>,
+    #[serde(bound(deserialize = "Entity<Located<PhiT<Var>>>: serde::Deserialize<'de>"))]
+    phis: Vec<Entity<Located<PhiT<Var>>>>,
+    #[serde(bound(
+        deserialize = "Entity<Located<StmtT<Loc, Val, Var>>>: serde::Deserialize<'de>"
+    ))]
+    operations: Vec<Entity<Located<StmtT<Loc, Val, Var>>>>,
+    #[serde(bound(
+        deserialize = "LocationTarget<BlockT<Loc, Val, Var>>: serde::Deserialize<'de>"
+    ))]
+    next_blocks: Vec<LocationTarget<BlockT<Loc, Val, Var>>>,
 }
 
-impl Identifiable<Block> for Block {
-    fn id(&self) -> Id<Block> {
+impl<Loc, Val, Var> Identifiable<BlockT<Loc, Val, Var>> for BlockT<Loc, Val, Var>
+where
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone,
+{
+    fn id(&self) -> Id<Self> {
         self.id.id()
     }
 }
 
-impl Locatable for Block {
+impl<Loc, Val, Var> Locatable for BlockT<Loc, Val, Var>
+where
+    Loc: Clone + Locatable,
+    Val: Clone,
+    Var: Clone,
+{
     fn location(&self) -> Location {
         self.id.location()
     }
 }
 
-pub trait BlockMapping {
-    fn block_by_id(&self, id: Id<Block>) -> Option<EntityRef<Block>>;
-    fn block_by_location(&self, location: &Location) -> Option<EntityRef<Block>>;
+pub trait BlockMapping<Loc, Val, Var>
+where
+    Loc: Clone + Locatable,
+    Val: Clone,
+    Var: Clone,
+{
+    fn block_by_id(
+        &self,
+        id: Id<BlockT<Loc, Val, Var>>,
+    ) -> Option<EntityRef<BlockT<Loc, Val, Var>>>;
+    fn block_by_location(&self, location: &Loc) -> Option<EntityRef<BlockT<Loc, Val, Var>>>;
 }
 
-impl Display for Block {
+impl<Loc, Val, Var> Display for BlockT<Loc, Val, Var>
+where
+    Loc: Clone + Display,
+    Val: Clone + Display,
+    Var: Clone + Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for phi in self.phis.iter() {
-            writeln!(f, "{} {}", phi.location(), **phi)?;
+            writeln!(f, "{} {}", phi.location(), phi.value())?;
         }
 
         for stmt in self.operations.iter() {
@@ -64,19 +103,34 @@ impl Display for Block {
     }
 }
 
-pub struct BlockDisplay<'a> {
-    blk: &'a Block,
-    trans: Option<&'a Translator>,
+pub struct BlockDisplay<'blk, 'trans, Loc, Val, Var>
+where
+    Loc: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Val: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Var: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+{
+    blk: &'blk BlockT<Loc, Val, Var>,
+    trans: Option<&'trans Translator>,
 }
 
-impl<'a> Display for BlockDisplay<'a> {
+impl<'blk, 'trans, Loc, Val, Var> Display for BlockDisplay<'blk, 'trans, Loc, Val, Var>
+where
+    Loc: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Val: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Var: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for phi in self.blk.phis.iter() {
-            writeln!(f, "{} {}", phi.location(), phi.display_with(self.trans))?;
+            writeln!(
+                f,
+                "{} {}",
+                phi.location(),
+                (**phi.value()).display_with(self.trans)
+            )?;
         }
 
         for stmt in self.blk.operations.iter() {
-            writeln!(f, "{} {}", stmt.location(), stmt.value().display_with(self.trans))?;
+            writeln!(f, "{} {}", stmt.location(), stmt.display_with(self.trans))?;
         }
 
         Ok(())
@@ -174,12 +228,16 @@ impl Block {
                 .drain(..)
                 .enumerate()
                 .map(|(offset, operation)| {
-                    Entity::new("stmt", Located::new(Location::new(address.clone(), offset), operation))
+                    Entity::new(
+                        "stmt",
+                        Located::new(Location::new(address.clone(), offset), operation),
+                    )
                 })
                 .collect::<Vec<_>>();
 
             let mut local_blocks = Vec::with_capacity(local_targets.len() + 1);
-            let mut last_location = LocationTarget::from(Location::new(address.clone() + ecode.length, 0));
+            let mut last_location =
+                LocationTarget::from(Location::new(address.clone() + ecode.length, 0));
 
             for start in local_targets.into_iter() {
                 let lid = LocatableId::new("blk", Location::new(address.clone(), start));
@@ -189,7 +247,12 @@ impl Block {
                     phis: Default::default(),
                     next_blocks: Vec::default(),
                 };
-                if block.operations().last().map(|o| o.has_fall()).unwrap_or(true) {
+                if block
+                    .operations()
+                    .last()
+                    .map(|o| o.has_fall())
+                    .unwrap_or(true)
+                {
                     block.next_blocks.push(last_location);
                 }
                 last_location = block.id().into();
@@ -197,25 +260,30 @@ impl Block {
             }
 
             let lid = LocatableId::new("blk", Location::new(address.clone(), 0));
-            local_blocks.push(Entity::from_parts(
-                lid.id(),
+            local_blocks.push(Entity::from_parts(lid.id(), {
+                let mut block = Block {
+                    id: lid,
+                    operations: if operations.is_empty() {
+                        vec![Entity::new(
+                            "stmt",
+                            Located::new(Location::new(address, 0), Stmt::skip()),
+                        )]
+                    } else {
+                        operations
+                    },
+                    phis: Default::default(),
+                    next_blocks: Vec::default(),
+                };
+                if block
+                    .operations()
+                    .last()
+                    .map(|o| o.has_fall())
+                    .unwrap_or(true)
                 {
-                    let mut block = Block {
-                        id: lid,
-                        operations: if operations.is_empty() {
-                            vec![Entity::new("stmt", Located::new(Location::new(address, 0), Stmt::skip()))]
-                        } else {
-                            operations
-                        },
-                        phis: Default::default(),
-                        next_blocks: Vec::default(),
-                    };
-                    if block.operations().last().map(|o| o.has_fall()).unwrap_or(true) {
-                        block.next_blocks.push(last_location);
-                    }
-                    block
+                    block.next_blocks.push(last_location);
                 }
-            ));
+                block
+            }));
 
             blocks.extend(local_blocks.into_iter().rev());
 
@@ -238,76 +306,108 @@ impl Block {
 
         Ok(blocks)
     }
+}
 
+impl<Loc, Val, Var> BlockT<Loc, Val, Var>
+where
+    Loc: Clone + Locatable,
+    Val: Clone,
+    Var: Clone,
+{
     // next blocks are implicit flows due to fall-through behaviour
-    pub fn next_blocks(&self) -> impl Iterator<Item = &LocationTarget<Block>> {
+    pub fn next_blocks(&self) -> impl Iterator<Item = &LocationTarget<Self>> {
         self.next_blocks.iter()
     }
 
     // next blocks are implicit flows due to fall-through behaviour
-    pub fn next_blocks_mut(&mut self) -> &mut Vec<LocationTarget<Block>> {
+    pub fn next_blocks_mut(&mut self) -> &mut Vec<LocationTarget<Self>> {
         &mut self.next_blocks
     }
 
     pub fn next_block_entities<'a, M, C>(&self, mapping: &'a M) -> C
-    where M: 'a + EntityIdMapping<Block> + EntityLocMapping<Block>,
-          C: EntityRefCollector<'a, Block> {
+    where
+        M: 'a + EntityIdMapping<Self> + EntityLocMapping<Self>,
+        C: EntityRefCollector<'a, Self>,
+        Loc: 'a,
+        Val: 'a,
+        Var: 'a,
+    {
         let mut c = C::default();
         self.next_block_entities_with(mapping, &mut c);
         c
     }
 
     pub fn next_block_entities_with<'a, M, C>(&self, mapping: &'a M, collect: &mut C)
-    where M: 'a + EntityIdMapping<Block> + EntityLocMapping<Block>,
-          C: EntityRefCollector<'a, Block> {
-        for e in self.next_blocks.iter().filter_map(|tgt| tgt.resolve_with(mapping)) {
+    where
+        M: 'a + EntityIdMapping<Self> + EntityLocMapping<Self>,
+        C: EntityRefCollector<'a, Self>,
+        Loc: 'a,
+        Val: 'a,
+        Var: 'a,
+    {
+        for e in self
+            .next_blocks
+            .iter()
+            .filter_map(|tgt| tgt.resolve_with(mapping))
+        {
             collect.insert(e);
         }
     }
 
-    pub fn first(&self) -> &Entity<Located<Stmt>> {
+    pub fn first(&self) -> &Entity<Located<StmtT<Loc, Val, Var>>> {
         &self.operations[0]
     }
 
-    pub fn first_mut(&mut self) -> &mut Entity<Located<Stmt>> {
+    pub fn first_mut(&mut self) -> &mut Entity<Located<StmtT<Loc, Val, Var>>> {
         &mut self.operations[0]
     }
 
-    pub fn last(&self) -> &Entity<Located<Stmt>> {
+    pub fn last(&self) -> &Entity<Located<StmtT<Loc, Val, Var>>> {
         &self.operations[self.operations.len() - 1]
     }
 
-    pub fn last_mut(&mut self) -> &mut Entity<Located<Stmt>> {
+    pub fn last_mut(&mut self) -> &mut Entity<Located<StmtT<Loc, Val, Var>>> {
         let offset = self.operations.len() - 1;
         &mut self.operations[offset]
     }
 
-    pub fn phis(&self) -> &[Entity<Located<Phi>>] {
+    pub fn phis(&self) -> &[Entity<Located<PhiT<Var>>>] {
         &self.phis
     }
 
-    pub fn phis_mut(&mut self) -> &mut Vec<Entity<Located<Phi>>> {
+    pub fn phis_mut(&mut self) -> &mut Vec<Entity<Located<PhiT<Var>>>> {
         &mut self.phis
     }
 
-    pub fn operations(&self) -> &[Entity<Located<Stmt>>] {
+    pub fn operations(&self) -> &[Entity<Located<StmtT<Loc, Val, Var>>>] {
         &self.operations
     }
 
-    pub fn operations_mut(&mut self) -> &mut [Entity<Located<Stmt>>] {
+    pub fn operations_mut(&mut self) -> &mut [Entity<Located<StmtT<Loc, Val, Var>>>] {
         &mut self.operations
     }
 }
 
-impl<'blk, 'trans: 'blk> TranslatorDisplay<'blk, 'trans> for Block {
-    type Target = BlockDisplay<'blk>;
+impl<'blk, 'trans: 'blk, Loc, Val, Var> TranslatorDisplay<'blk, 'trans> for BlockT<Loc, Val, Var>
+where
+    Loc: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Val: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Var: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+{
+    type Target = BlockDisplay<'blk, 'trans, Loc, Val, Var>;
 
-    fn display_with(&'blk self, t: Option<&'trans Translator>) -> BlockDisplay<'blk> {
-        BlockDisplay { blk: self, trans: t }
+    fn display_with(
+        &'blk self,
+        t: Option<&'trans Translator>,
+    ) -> BlockDisplay<'blk, 'trans, Loc, Val, Var> {
+        BlockDisplay {
+            blk: self,
+            trans: t,
+        }
     }
 }
 
-impl<'ecode> Variables<'ecode> for Block {
+impl<'ecode> Variables<'ecode, Var> for Block {
     fn all_variables_with<C>(&'ecode self, vars: &mut C)
     where
         C: ValueRefCollector<'ecode, Var>,

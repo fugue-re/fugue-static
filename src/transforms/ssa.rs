@@ -67,6 +67,11 @@ where G: AsEntityGraphMut<'ecode, Block, E> {
     let mut defs_tmp = HashSet::new();
     let mut uses_tmp = HashSet::new();
 
+    // clear old phis if any and alloc new (owned) blocks
+    for (_eid, _vx, blk) in g.entity_graph_mut().entities_mut() {
+        blk.to_mut().phis_mut().clear();
+    }
+
     // def. use information for each block and g
     for (_eid, vx, blk) in g.entity_graph().entities() {
         blk.value().defined_and_used_variables_with(&mut defs_tmp, &mut uses_tmp);

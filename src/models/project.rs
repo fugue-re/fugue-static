@@ -1,4 +1,3 @@
-
 use crate::models::{Block, Function};
 use crate::models::memory::{Memory, Region, RegionIOError};
 use crate::models::lifter::{Lifter, LifterBuilder, LifterBuilderError};
@@ -101,11 +100,11 @@ pub struct Project {
     blk_oracle: Option<Arc<RwLock<dyn BlockOracle>>>,
     fcn_oracle: Option<Arc<RwLock<dyn FunctionOracle>>>,
     fcn_oracle_starts: BTreeSet<Location>,
-    
+
     blks: BTreeMap<Id<Block>, Entity<Block>>,
     blks_to_locs: BTreeMap<Id<Block>, Location>,
     locs_to_blks: BTreeMap<Location, BTreeSet<Id<Block>>>,
-    
+
     fcns: BTreeMap<Id<Function>, Entity<Function>>,
     fcns_to_locs: BTreeMap<Id<Function>, Location>,
     locs_to_fcns: BTreeMap<Location, Id<Function>>,
@@ -125,7 +124,7 @@ impl Project {
             blk_oracle: None,
             fcn_oracle: None,
             fcn_oracle_starts: Default::default(),
-            
+
             blks: Default::default(),
             blks_to_locs: Default::default(),
             locs_to_blks: Default::default(),
@@ -136,7 +135,7 @@ impl Project {
             syms_to_fcns: Default::default(),
         })
     }
-    
+
     pub fn set_block_oracle<O: BlockOracle + 'static>(&mut self, oracle: O) {
         self.blk_oracle = Some(Arc::new(RwLock::new(oracle)))
     }
@@ -146,7 +145,7 @@ impl Project {
         self.fcn_oracle_starts.extend(oracle.read().function_starts(self.lifter.translator()).into_iter());
         self.fcn_oracle = Some(oracle);
     }
-    
+
     pub fn add_region_mapping(&mut self, region: Entity<Region>) {
         self.memory.add_region(region);
     }
@@ -160,14 +159,14 @@ impl Project {
     ) {
         self.memory.add_region(Region::new(name, addr, endian, bytes));
     }
-    
+
     pub fn add_function(&mut self, location: impl IntoAddress) -> Result<Id<Function>, ProjectError> {
         let location = location.into_address_value(self.lifter().translator().manager().default_space_ref());
         let location = location.into();
         if !self.fcn_oracle_starts.contains(&location) {
             return Err(ProjectError::FunctionOracleInconsistent(location))
         }
-        
+
         let sym = self.fcn_oracle.as_ref().and_then(|o| o.read().function_symbol(&location))
             .unwrap_or_else(|| Cow::from(format!("sub_{}", location.address())));
 
@@ -180,7 +179,7 @@ impl Project {
 
         let blks = self.fcn_oracle.as_ref().and_then(|o| o.read().function_blocks(&location))
             .unwrap_or_default();
-        
+
         for blk in blks.into_iter() {
             let addr = blk.address();
             let basic_addr = Address::from(&*addr);
@@ -192,9 +191,9 @@ impl Project {
             let bytes = region.view_bytes(&basic_addr, size_hint)?;
             fcn_builder.add_block(blk.address().offset(), bytes)?;
         }
-        
+
         let (fcn, blks) = fcn_builder.build();
-        
+
         for blk in blks {
             let id = blk.id();
             let loc = blk.location();
@@ -207,22 +206,22 @@ impl Project {
             self.blks_to_locs.insert(id, loc.clone());
             self.locs_to_blks.entry(loc).or_default().insert(id);
         }
-        
+
         let id = fcn.id();
         let loc = fcn.location();
 
         if let Some(ref o) = self.fcn_oracle {
             o.write().function_identity(&loc, id);
         }
-        
+
         self.fcns.insert(id, fcn);
         self.fcns_to_locs.insert(id, loc.clone());
         self.locs_to_fcns.insert(loc, id);
         self.syms_to_fcns.insert(sym, id);
-        
+
         Ok(id)
     }
-    
+
     pub fn lifter(&self) -> &Lifter {
         &self.lifter
     }
@@ -270,7 +269,7 @@ impl BlockOracle for Project {
     fn block_succs(&self, loc: &Location) -> Option<Vec<Location>> {
         self.blk_oracle.as_ref()?.read().block_succs(loc)
     }
-    
+
     fn block_identity(&mut self, loc: &Location, id: Id<Block>) {
         if let Some(oracle) = self.blk_oracle.as_ref() {
             oracle.write().block_identity(loc, id)
@@ -282,15 +281,15 @@ impl FunctionOracle for Project {
     fn function_starts(&self, _translator: &Translator) -> Vec<Location> {
         self.fcn_oracle_starts.iter().cloned().collect()
     }
-    
+
     fn function_symbol(&self, loc: &Location) -> Option<Cow<'static, str>> {
         self.fcn_oracle.as_ref()?.read().function_symbol(loc)
     }
-    
+
     fn function_blocks(&self, loc: &Location) -> Option<Vec<Location>> {
         self.fcn_oracle.as_ref()?.read().function_blocks(loc)
     }
-    
+
     fn function_identity(&mut self, loc: &Location, id: Id<Function>) {
         if let Some(oracle) = self.fcn_oracle.as_ref() {
             oracle.write().function_identity(loc, id)

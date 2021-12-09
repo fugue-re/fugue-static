@@ -90,6 +90,17 @@ impl<V> Entity<V> where V: Clone {
         }
     }
 
+    pub fn map<U, F>(self, f: F) -> Entity<U>
+    where
+        U: Clone,
+        F: Fn(V) -> U
+    {
+        Entity {
+            id: self.id.retype(),
+            value: f(self.value),
+        }
+    }
+
     pub fn value(&self) -> &V {
         &self.value
     }

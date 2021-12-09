@@ -63,24 +63,24 @@ impl<T> Copy for Id<T> { }
 impl<T> Id<T> {
     pub fn new(tag: &'static str) -> Self {
         Self {
-            tag, 
+            tag,
             uuid: UUID::now(),
             marker: PhantomData,
         }
     }
-    
-    pub fn retype<U: Clone>(self) -> Id<U> {
+
+    pub fn retype<U>(self) -> Id<U> {
         Id {
             tag: self.tag,
             uuid: self.uuid,
             marker: PhantomData,
         }
     }
-    
+
     pub fn erase(self) -> Id<Erased> {
         self.retype()
     }
-    
+
     pub fn invalid(tag: &'static str) -> Self {
         Self {
             tag,
@@ -92,15 +92,15 @@ impl<T> Id<T> {
     pub fn is_valid(&self) -> bool {
         !self.is_invalid()
     }
-    
+
     pub fn is_invalid(&self) -> bool {
         self.uuid.is_zero()
     }
-    
+
     pub fn tag(&self) -> &'static str {
         self.tag
     }
-    
+
     pub fn uuid(&self) -> UUID {
         self.uuid
     }
@@ -133,22 +133,29 @@ impl<T> LocatableId<T> {
             location: location.into(),
         }
     }
-    
+
+    pub fn retype<U>(self) -> LocatableId<U> {
+        LocatableId {
+            id: self.id.retype(),
+            location: self.location,
+        }
+    }
+
     pub fn erase(self) -> LocatableId<Erased> {
         LocatableId {
             id: self.id.erase(),
             location: self.location,
         }
     }
-    
+
     pub fn is_valid(&self) -> bool {
         self.id.is_valid()
     }
-    
+
     pub fn is_invalid(&self) -> bool {
         self.id.is_invalid()
     }
-    
+
     pub fn from_parts(id: Id<T>, location: Location) -> Self {
         Self {
             id,

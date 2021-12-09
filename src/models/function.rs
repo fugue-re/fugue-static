@@ -1,13 +1,15 @@
 use std::collections::{BTreeSet, HashMap};
 
+use fugue::bv::BitVec;
 use fugue::db;
 
 use fugue::ir::Translator;
 use fugue::ir::disassembly::ContextDatabase;
-use fugue::ir::il::ecode::{BranchTarget, ECode, Location, Stmt};
+use fugue::ir::il::ecode::{BranchTargetT, ECode, Location, StmtT, Var};
+use fugue::ir::il::traits::*;
 
 use crate::models::cfg::{BranchKind, CFG};
-use crate::models::{Block, BlockLifter};
+use crate::models::{Block, BlockT, BlockLifter};
 use crate::traits::{BlockOracle, StmtExt};
 use crate::traits::oracle::NullOracle;
 use crate::types::{Id, Identifiable, LocationTarget, Locatable, LocatableId, Entity, EntityIdMapping, EntityLocMapping};
@@ -21,50 +23,78 @@ pub enum Error {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Function {
-    id: LocatableId<Function>,
+pub struct FunctionT<Loc, Val, Var>
+where
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone
+{
+    id: LocatableId<FunctionT<Loc, Val, Var>>,
     symbol: String,
-    block_ids: HashMap<Id<Block>, Location>,
-    callers: HashMap<LocatableId<Function>, LocatableId<Stmt>>,
+    block_ids: HashMap<Id<BlockT<Loc, Val, Var>>, Location>,
+    callers: HashMap<LocatableId<FunctionT<Loc, Val, Var>>, LocatableId<StmtT<Loc, Val, Var>>>,
 }
 
-impl Identifiable<Function> for Function {
-    fn id(&self) -> Id<Function> {
+pub type Function = FunctionT<Location, BitVec, Var>;
+
+impl<Loc, Val, Var> Identifiable<FunctionT<Loc, Val, Var>> for FunctionT<Loc, Val, Var>
+where
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone
+{
+    fn id(&self) -> Id<FunctionT<Loc, Val, Var>> {
         self.id.id()
     }
 }
 
-impl Locatable for Function {
+impl<Loc, Val, Var> Locatable for FunctionT<Loc, Val, Var>
+where
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone
+{
     fn location(&self) -> Location {
         self.id.location()
     }
 }
 
-impl Function {
+impl<Loc, Val, Var> FunctionT<Loc, Val, Var>
+where
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone,
+{
     pub fn symbol(&self) -> &str {
         &self.symbol
     }
 
-    pub fn blocks(&self) -> &HashMap<Id<Block>, Location> {
+    pub fn blocks(&self) -> &HashMap<Id<BlockT<Loc, Val, Var>>, Location> {
         &self.block_ids
     }
 
-    pub fn callers(&self) -> &HashMap<LocatableId<Function>, LocatableId<Stmt>> {
+    pub fn callers(&self) -> &HashMap<LocatableId<FunctionT<Loc, Val, Var>>, LocatableId<StmtT<Loc, Val, Var>>> {
         &self.callers
     }
 
-    pub fn callers_mut(&mut self) -> &mut HashMap<LocatableId<Function>, LocatableId<Stmt>> {
+    pub fn callers_mut(&mut self) -> &mut HashMap<LocatableId<FunctionT<Loc, Val, Var>>, LocatableId<StmtT<Loc, Val, Var>>> {
         &mut self.callers
     }
 
-    pub fn cfg<'db, M>(&self, mapping: &'db M) -> CFG<'db, Block>
-    where M: 'db + EntityIdMapping<Block> + EntityLocMapping<Block> {
+    pub fn cfg<'db, M>(&self, mapping: &'db M) -> CFG<'db, BlockT<Loc, Val, Var>>
+    where M: 'db + EntityIdMapping<BlockT<Loc, Val, Var>> + EntityLocMapping<BlockT<Loc, Val, Var>>,
+          Loc: Locatable,
+          Val: 'db,
+          Var: 'db {
         self.cfg_with(mapping, &NullOracle)
     }
 
-    pub fn cfg_with<'db, M, O>(&self, mapping: &'db M, oracle: &O) -> CFG<'db, Block>
-    where M: 'db + EntityIdMapping<Block> + EntityLocMapping<Block>,
-          O: 'db + BlockOracle {
+    pub fn cfg_with<'db, M, O>(&self, mapping: &'db M, oracle: &O) -> CFG<'db, BlockT<Loc, Val, Var>>
+    where M: 'db + EntityIdMapping<BlockT<Loc, Val, Var>> + EntityLocMapping<BlockT<Loc, Val, Var>>,
+          O: 'db + BlockOracle,
+          Loc: Locatable,
+          Val: 'db,
+          Var: 'db {
         let mut cfg = CFG::new();
         let mut succs = Vec::new();
 
@@ -91,15 +121,15 @@ impl Function {
             }
 
             match &**blk.value().last().value() {
-                Stmt::CBranch(_, t) => match t {
-                    BranchTarget::Location(ref location) => {
-                        let tgt = &mapping.lookup_by_location::<Option<_>>(location).expect("block exists");
+                StmtT::CBranch(_, t) => match t {
+                    BranchTargetT::Location(ref location) => {
+                        let tgt = &mapping.lookup_by_location::<Option<_>>(&location.location()).expect("block exists");
                         if self.block_ids.contains_key(&tgt.id()) {
                             let fall = blk.next_block_entities::<_, Option<_>>(mapping).unwrap();
                             cfg.add_cond(blk, tgt, fall);
                         }
                     },
-                    BranchTarget::Computed(_) => {
+                    BranchTargetT::Computed(_) => {
                         for location in oracle_resolved.into_iter() {
                             let tgt = &mapping.lookup_by_location::<Option<_>>(&location).expect("block exists");
                             if self.block_ids.contains_key(&tgt.id()) {
@@ -110,14 +140,14 @@ impl Function {
                         cfg.add_fall(blk, fall);
                     },
                 }
-                Stmt::Branch(t) => match t {
-                    BranchTarget::Location(ref location) => {
-                        let tgt = &mapping.lookup_by_location::<Option<_>>(location).expect("block exists");
+                StmtT::Branch(t) => match t {
+                    BranchTargetT::Location(ref location) => {
+                        let tgt = &mapping.lookup_by_location::<Option<_>>(&location.location()).expect("block exists");
                         if self.block_ids.contains_key(&tgt.id()) {
                             cfg.add_jump(blk, tgt);
                         }
                     },
-                    BranchTarget::Computed(_) => {
+                    BranchTargetT::Computed(_) => {
                         for location in oracle_resolved.into_iter() {
                             let tgt = &mapping.lookup_by_location::<Option<_>>(&location).expect("block exists");
                             if self.block_ids.contains_key(&tgt.id()) {
@@ -147,6 +177,20 @@ impl Function {
         }
 
         cfg
+    }
+
+    pub fn translate<T: TranslateIR<Loc, Val, Var>>(self, _: &T) -> FunctionT<T::TLoc, T::TVal, T::TVar>
+    where
+        T::TLoc: Clone,
+        T::TVal: Clone,
+        T::TVar: Clone,
+    {
+        FunctionT {
+            id: self.id.retype(),
+            symbol: self.symbol,
+            block_ids: self.block_ids.into_iter().map(|(k, v)| (k.retype(), v)).collect(),
+            callers: self.callers.into_iter().map(|(k, v)| (k.retype(), v.retype())).collect(),
+        }
     }
 }
 

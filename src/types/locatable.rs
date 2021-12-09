@@ -87,6 +87,16 @@ impl<V> Located<V> {
         }
     }
 
+    pub fn map<U, F>(self, f: F) -> Located<U>
+    where
+        F: Fn(V) -> U,
+    {
+        Located {
+            location: self.location,
+            value: f(self.value),
+        }
+    }
+
     pub fn into_inner(self) -> V {
         self.value
     }
@@ -211,6 +221,14 @@ impl<T> From<Id<T>> for LocationTarget<T> {
 impl<T> LocationTarget<T> {
     pub fn new(target: impl Into<LocationTarget<T>>) -> Self {
         target.into()
+    }
+
+    pub fn retype<U>(self) -> LocationTarget<U> {
+        match self {
+            Self::Resolved(id) => LocationTarget::Resolved(id.retype()),
+            Self::Fixed(loc) => LocationTarget::Fixed(loc),
+            Self::Computed(expr, pos) => LocationTarget::Computed(expr, pos),
+        }
     }
 
     pub fn is_determined(&self) -> bool {

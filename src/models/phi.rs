@@ -91,6 +91,13 @@ where
     pub fn parts_mut(&mut self) -> (&mut Var, &mut Vec<Var>) {
         (&mut self.var, &mut self.vars)
     }
+
+    pub fn translate<Loc, Val, T: TranslateIR<Loc, Val, Var>>(self, t: &T) -> PhiT<T::TVar> {
+        PhiT {
+            var: t.translate_var(self.var),
+            vars: self.vars.into_iter().map(|v| t.translate_var(v)).collect(),
+        }
+    }
 }
 
 impl<'phi, 'trans, Var> TranslatorDisplay<'phi, 'trans> for PhiT<Var>

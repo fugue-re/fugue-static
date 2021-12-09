@@ -268,18 +268,21 @@ impl<'ecode> NormaliseAliases for CFG<'ecode, Block> {
 
 pub struct VariableNormaliser {
     alias_normaliser: VariableAliasNormaliser,
+    space: AddressSpaceId,
     unique_base: u64,
 }
 
 struct VariableNormaliserVisitor {
     mapping: BTreeMap<u64, u64>,
+    space: AddressSpaceId,
     unique_base: u64,
 }
 
 impl VariableNormaliserVisitor {
-    fn new(unique_base: u64) -> Self {
+    fn new(unique_base: u64, space: AddressSpaceId) -> Self {
         Self {
             mapping: BTreeMap::new(),
+            space,
             unique_base,
         }
     }
@@ -297,15 +300,21 @@ impl<'ecode, Loc, Val> VisitMut<'ecode, Loc, Val, Var> for VariableNormaliserVis
                     offset
                 });
             self.unique_base = unique_base;
-            *var = Var::new(var.space(), *noffset, var.bits(), var.generation());
+            *var = Var::new(self.space, *noffset, var.bits(), var.generation());
         }
     }
 }
 
 impl VariableNormaliser {
     pub fn new<T: Borrow<Translator>>(translator: T) -> Self {
+        let translator = translator.borrow();
+        Self::new_with(translator, translator.manager().unique_space_id())
+    }
+
+    pub fn new_with<T: Borrow<Translator>>(translator: T, space: AddressSpaceId) -> Self {
         Self {
             alias_normaliser: VariableAliasNormaliser::new(translator),
+            space,
             unique_base: 0,
         }
     }
@@ -321,7 +330,7 @@ impl VariableNormaliser {
     fn transform_ecode(&mut self, ecode: &mut ECode) {
         self.alias_normaliser.transform_ecode(ecode);
 
-        let mut visitor = VariableNormaliserVisitor::new(self.unique_base);
+        let mut visitor = VariableNormaliserVisitor::new(self.unique_base, self.space);
 
         for op in ecode.operations_mut().iter_mut() {
             visitor.visit_stmt_mut(op);

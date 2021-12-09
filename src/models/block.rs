@@ -62,7 +62,7 @@ where
 
 impl<Loc, Val, Var> Locatable for BlockT<Loc, Val, Var>
 where
-    Loc: Clone + Locatable,
+    Loc: Clone,
     Val: Clone,
     Var: Clone,
 {
@@ -73,7 +73,7 @@ where
 
 pub trait BlockMapping<Loc, Val, Var>
 where
-    Loc: Clone + Locatable,
+    Loc: Clone,
     Val: Clone,
     Var: Clone,
 {
@@ -310,7 +310,7 @@ impl Block {
 
 impl<Loc, Val, Var> BlockT<Loc, Val, Var>
 where
-    Loc: Clone + Locatable,
+    Loc: Clone,
     Val: Clone,
     Var: Clone,
 {
@@ -386,6 +386,20 @@ where
     pub fn operations_mut(&mut self) -> &mut [Entity<Located<StmtT<Loc, Val, Var>>>] {
         &mut self.operations
     }
+
+    pub fn translate<T: TranslateIR<Loc, Val, Var>>(self, t: &T) -> BlockT<T::TLoc, T::TVal, T::TVar>
+    where
+        T::TLoc: Clone,
+        T::TVal: Clone,
+        T::TVar: Clone,
+    {
+        BlockT {
+            id: self.id.retype(),
+            phis: self.phis.into_iter().map(|e| e.map(|lphi| lphi.map(|phi| phi.translate(t)))).collect(),
+            operations: self.operations.into_iter().map(|e| e.map(|lop| lop.map(|op| op.translate(t)))).collect(),
+            next_blocks: self.next_blocks.into_iter().map(|nb| nb.retype()).collect(),
+        }
+    }
 }
 
 impl<'blk, 'trans: 'blk, Loc, Val, Var> TranslatorDisplay<'blk, 'trans> for BlockT<Loc, Val, Var>
@@ -407,7 +421,12 @@ where
     }
 }
 
-impl<'ecode> Variables<'ecode, Var> for Block {
+impl<'ecode, Loc, Val, Var> Variables<'ecode, Var> for BlockT<Loc, Val, Var>
+where
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone,
+{
     fn all_variables_with<C>(&'ecode self, vars: &mut C)
     where
         C: ValueRefCollector<'ecode, Var>,

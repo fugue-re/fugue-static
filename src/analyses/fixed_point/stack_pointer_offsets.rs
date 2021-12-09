@@ -1,5 +1,6 @@
 use fugue::bv::BitVec;
 use fugue::ir::il::ecode::{Location, Stmt, Var};
+use fugue::ir::il::traits::*;
 use fugue::ir::Translator;
 
 use std::borrow::Borrow;

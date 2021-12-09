@@ -5,6 +5,7 @@ use fugue::db::BasicBlock;
 
 use fugue::ir::disassembly::ContextDatabase;
 use fugue::ir::il::ecode::{BranchTarget, ECode, Location, Stmt, Var};
+use fugue::ir::il::traits::*;
 use fugue::ir::Translator;
 
 use thiserror::Error;
@@ -65,18 +66,17 @@ impl Display for Block {
 
 pub struct BlockDisplay<'a> {
     blk: &'a Block,
-    trans: &'a Translator,
+    trans: Option<&'a Translator>,
 }
 
 impl<'a> Display for BlockDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tr = Some(self.trans);
         for phi in self.blk.phis.iter() {
-            writeln!(f, "{} {}", phi.location(), phi.display(self.trans))?;
+            writeln!(f, "{} {}", phi.location(), phi.display_with(self.trans))?;
         }
 
         for stmt in self.blk.operations.iter() {
-            writeln!(f, "{} {}", stmt.location(), stmt.value().display(tr))?;
+            writeln!(f, "{} {}", stmt.location(), stmt.value().display_with(self.trans))?;
         }
 
         Ok(())
@@ -128,7 +128,7 @@ impl Block {
             // to "instruction local" branch targets and global branches.
             // Then, we process them in reverse order to partition the
             // vector of operations into blocks.
-            // 
+            //
             // NOTE: Expr::Call will not appear due to lifting, and so we
             // do not need to consider it here.
 
@@ -180,7 +180,7 @@ impl Block {
 
             let mut local_blocks = Vec::with_capacity(local_targets.len() + 1);
             let mut last_location = LocationTarget::from(Location::new(address.clone() + ecode.length, 0));
-            
+
             for start in local_targets.into_iter() {
                 let lid = LocatableId::new("blk", Location::new(address.clone(), start));
                 let mut block = Block {
@@ -248,7 +248,7 @@ impl Block {
     pub fn next_blocks_mut(&mut self) -> &mut Vec<LocationTarget<Block>> {
         &mut self.next_blocks
     }
-    
+
     pub fn next_block_entities<'a, M, C>(&self, mapping: &'a M) -> C
     where M: 'a + EntityIdMapping<Block> + EntityLocMapping<Block>,
           C: EntityRefCollector<'a, Block> {
@@ -297,8 +297,12 @@ impl Block {
     pub fn operations_mut(&mut self) -> &mut [Entity<Located<Stmt>>] {
         &mut self.operations
     }
+}
 
-    pub fn display<'a>(&'a self, t: &'a Translator) -> BlockDisplay<'a> {
+impl<'blk, 'trans: 'blk> TranslatorDisplay<'blk, 'trans> for Block {
+    type Target = BlockDisplay<'blk>;
+
+    fn display_with(&'blk self, t: Option<&'trans Translator>) -> BlockDisplay<'blk> {
         BlockDisplay { blk: self, trans: t }
     }
 }

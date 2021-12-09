@@ -1,5 +1,6 @@
 use fugue::ir::Translator;
 use fugue::ir::il::ecode::{Location, Var};
+use fugue::ir::il::traits::*;
 
 use std::fmt::{self, Display};
 
@@ -30,19 +31,18 @@ impl Display for Phi {
 
 pub struct PhiDisplay<'a> {
     phi: &'a Phi,
-    trans: &'a Translator,
+    trans: Option<&'a Translator>,
 }
 
 impl<'a> Display for PhiDisplay<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tr = Some(self.trans);
         if self.phi.vars.is_empty() {
             // NOTE: should never happen
-            write!(f, "{} ← ϕ(<empty>)", self.phi.var.display(tr))?;
+            write!(f, "{} ← ϕ(<empty>)", self.phi.var.display_with(self.trans))?;
         } else {
-            write!(f, "{} ← ϕ({}", self.phi.var.display(tr), self.phi.vars[0].display(tr))?;
+            write!(f, "{} ← ϕ({}", self.phi.var.display_with(self.trans), self.phi.vars[0].display_with(self.trans))?;
             for aop in &self.phi.vars[1..] {
-                write!(f, ", {}", aop.display(tr))?;
+                write!(f, ", {}", aop.display_with(self.trans))?;
             }
             write!(f, ")")?;
         }
@@ -54,7 +54,7 @@ impl Phi {
     pub fn new(loc: impl Into<Location>, var: Var, vars: Vec<Var>) -> Entity<Located<Self>> {
         Entity::new("phi", Located::new(loc.into(), Phi { var, vars }))
     }
-    
+
     pub fn var(&self) -> &Var {
         &self.var
     }
@@ -62,20 +62,24 @@ impl Phi {
     pub fn var_mut(&mut self) -> &mut Var {
         &mut self.var
     }
-    
+
     pub fn assign(&self) -> &[Var] {
         &self.vars
     }
-    
+
     pub fn assign_mut(&mut self) -> &mut Vec<Var> {
         &mut self.vars
     }
-    
+
     pub fn parts_mut(&mut self) -> (&mut Var, &mut Vec<Var>) {
         (&mut self.var, &mut self.vars)
     }
-    
-    pub fn display<'a>(&'a self, t: &'a Translator) -> PhiDisplay<'a> {
+}
+
+impl<'phi, 'trans: 'phi> TranslatorDisplay<'phi, 'trans> for Phi {
+    type Target = PhiDisplay<'phi>;
+
+    fn display_with(&'phi self, t: Option<&'trans Translator>) -> PhiDisplay<'phi> {
         PhiDisplay { phi: self, trans: t }
     }
 }

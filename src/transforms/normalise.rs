@@ -22,6 +22,7 @@ use std::iter::FromIterator;
 
 use fugue::ir::{AddressSpaceId, Translator};
 use fugue::ir::il::ecode::{ECode, Expr, Stmt, Var};
+use fugue::ir::il::traits::*;
 
 use crate::models::{Block, CFG};
 use crate::types::{SimpleVar, VarView, VarViews};

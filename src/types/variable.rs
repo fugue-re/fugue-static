@@ -10,6 +10,7 @@ use intervals::collections::IntervalSet;
 
 use fugue::ir::Translator;
 use fugue::ir::il::ecode::Var;
+use fugue::ir::il::traits::*;
 use fugue::ir::space::AddressSpaceId;
 
 #[derive(Debug, Clone)]

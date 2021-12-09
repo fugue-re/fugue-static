@@ -7,6 +7,7 @@ use fugue::bv::BitVec;
 use fugue::ir::{AddressValue, Translator};
 use fugue::ir::space::AddressSpaceId;
 use fugue::ir::il::ecode::{BinOp, BinRel, BranchTarget, Cast, Expr, Location, Stmt, UnOp, UnRel, Var};
+use fugue::ir::il::traits::*;
 
 use egg::{define_language, EGraph, Id, Symbol};
 use egg::{rewrite, Analysis, AstSize, Extractor, RecExpr, Rewrite, Runner};

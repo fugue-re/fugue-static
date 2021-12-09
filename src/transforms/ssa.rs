@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 use petgraph::EdgeDirection;
 use fugue::ir::il::ecode::Var;
+use fugue::ir::il::traits::*;
 
 use crate::graphs::algorithms::dominance::{Dominance, DominanceTree};
 use crate::graphs::entity::{AsEntityGraphMut, VertexIndex};

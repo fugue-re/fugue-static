@@ -1,6 +1,7 @@
 use intervals::Interval;
 
 use fugue::ir::il::ecode::Var;
+use fugue::ir::il::traits::*;
 
 pub trait AsInterval<T>
 where

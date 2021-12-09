@@ -5,6 +5,7 @@ use crate::traits::*;
 use crate::graphs::entity::AsEntityGraph;
 
 use fugue::ir::il::ecode::Var;
+use fugue::ir::il::traits::*;
 
 use std::collections::BTreeSet;
 use std::convert::Infallible;

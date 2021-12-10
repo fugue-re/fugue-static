@@ -34,23 +34,40 @@ pub trait VisitMut<'ecode, Loc, Val, Var> {
     #[allow(unused)]
     fn visit_cast_bool_mut(&mut self) {}
     #[allow(unused)]
+    fn visit_cast_void_mut(&mut self) {}
+    #[allow(unused)]
     fn visit_cast_float_mut(&mut self, format: &'ecode mut Arc<FloatFormat>) {}
     #[allow(unused)]
     fn visit_cast_extend_signed_mut(&mut self, bits: usize) {}
     #[allow(unused)]
     fn visit_cast_extend_unsigned_mut(&mut self, bits: usize) {}
+
     #[allow(unused)]
-    fn visit_cast_truncate_msb_mut(&mut self, bits: usize) {}
+    fn visit_cast_pointer_mut(&mut self, cast: &'ecode mut Box<Cast>, bits: usize) {
+        self.visit_cast_mut(cast)
+    }
+
     #[allow(unused)]
-    fn visit_cast_truncate_lsb_mut(&mut self, bits: usize) {}
+    fn visit_cast_function_mut(&mut self, rtyp: &'ecode mut Box<Cast>, ptyps: &'ecode mut SmallVec<[Box<Cast>; 4]>) {
+        for ptyp in ptyps {
+            self.visit_cast_mut(ptyp);
+        }
+        self.visit_cast_mut(rtyp);
+    }
+
+    #[allow(unused)]
+    fn visit_cast_named_mut(&mut self, cast: &'ecode str, bits: usize) {}
+
     fn visit_cast_mut(&mut self, cast: &'ecode mut Cast) {
         match cast {
+            Cast::Void => self.visit_cast_void_mut(),
             Cast::Bool => self.visit_cast_bool_mut(),
             Cast::Float(ref mut format) => self.visit_cast_float_mut(format),
             Cast::Signed(bits) => self.visit_cast_extend_signed_mut(*bits),
             Cast::Unsigned(bits) => self.visit_cast_extend_unsigned_mut(*bits),
-            Cast::High(bits) => self.visit_cast_truncate_msb_mut(*bits),
-            Cast::Low(bits) => self.visit_cast_truncate_lsb_mut(*bits),
+            Cast::Pointer(ref mut cast, bits) => self.visit_cast_pointer_mut(cast, *bits),
+            Cast::Function(ref mut rtyp, ref mut ptyps) => self.visit_cast_function_mut(rtyp, ptyps),
+            Cast::Named(ref mut name, bits) => self.visit_cast_named_mut(name, *bits),
         }
     }
 
@@ -105,14 +122,18 @@ pub trait VisitMut<'ecode, Loc, Val, Var> {
     }
 
     #[allow(unused)]
-    fn visit_expr_extract_lsb_mut(&mut self, lsb: usize) {}
-    #[allow(unused)]
-    fn visit_expr_extract_msb_mut(&mut self, msb: usize) {}
+    fn visit_expr_extract_low_mut(&mut self, expr: &'ecode mut ExprT<Loc, Val, Var>, bits: usize) {
+        self.visit_expr_mut(expr);
+    }
 
+    #[allow(unused)]
+    fn visit_expr_extract_high_mut(&mut self, expr: &'ecode mut ExprT<Loc, Val, Var>, bits: usize) {
+        self.visit_expr_mut(expr);
+    }
+
+    #[allow(unused)]
     fn visit_expr_extract_mut(&mut self, expr: &'ecode mut ExprT<Loc, Val, Var>, lsb: usize, msb: usize) {
         self.visit_expr_mut(expr);
-        self.visit_expr_extract_lsb_mut(lsb);
-        self.visit_expr_extract_msb_mut(msb);
     }
 
     fn visit_expr_concat_mut(&mut self, lexpr: &'ecode mut ExprT<Loc, Val, Var>, rexpr: &'ecode mut ExprT<Loc, Val, Var>) {
@@ -173,6 +194,8 @@ pub trait VisitMut<'ecode, Loc, Val, Var> {
             ExprT::Load(ref mut expr, size, space) => {
                 self.visit_expr_load_mut(expr, *size, *space)
             }
+            ExprT::ExtractHigh(ref mut expr, bits) => self.visit_expr_extract_high_mut(expr, *bits),
+            ExprT::ExtractLow(ref mut expr, bits) => self.visit_expr_extract_low_mut(expr, *bits),
             ExprT::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
             ExprT::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
             ExprT::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),

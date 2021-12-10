@@ -162,7 +162,7 @@ impl Project {
     }
 
     pub fn add_function(&mut self, location: impl IntoAddress) -> Result<Id<Function>, ProjectError> {
-        let location = location.into_address_value(self.lifter().translator().manager().default_space_ref());
+        let location = location.into_address_value(self.lifter.translator().manager().default_space_ref());
         let location = location.into();
         if !self.fcn_oracle_starts.contains(&location) {
             return Err(ProjectError::FunctionOracleInconsistent(location))
@@ -171,7 +171,7 @@ impl Project {
         let sym = self.fcn_oracle.as_ref().and_then(|o| o.read().function_symbol(&location))
             .unwrap_or_else(|| Cow::from(format!("sub_{}", location.address())));
 
-        let mut norm = VariableNormaliser::new_with(&*self, self.lifter().temporary_space_id());
+        let mut norm = VariableNormaliser::new_with(self.lifter.translator(), self.lifter().temporary_space_id());
 
         let mut fcn_builder = FunctionBuilder::new(
             self.lifter.translator(),

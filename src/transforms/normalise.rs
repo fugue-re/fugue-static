@@ -20,8 +20,9 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::iter::FromIterator;
 
-use fugue::ir::{AddressSpaceId, Translator};
-use fugue::ir::il::ecode::{ECode, ExprT, StmtT, Var};
+use fugue::bv::BitVec;
+use fugue::ir::{AddressSpace, AddressSpaceId, Translator};
+use fugue::ir::il::ecode::{Cast, ECode, ExprT, StmtT, Var};
 use fugue::ir::il::traits::*;
 
 use crate::models::{Block, CFG};
@@ -205,6 +206,8 @@ where
             ExprT::Load(ref mut expr, size, space) => {
                 self.visit_expr_load_mut(expr, *size, *space)
             }
+            ExprT::ExtractLow(ref mut expr, bits) => self.visit_expr_extract_low_mut(expr, *bits),
+            ExprT::ExtractHigh(ref mut expr, bits) => self.visit_expr_extract_high_mut(expr, *bits),
             ExprT::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
             ExprT::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
             ExprT::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
@@ -266,19 +269,175 @@ impl<'ecode> NormaliseAliases for CFG<'ecode, Block> {
     }
 }
 
-pub struct VariableNormaliser {
+pub struct VariableNormaliser<'a> {
     alias_normaliser: VariableAliasNormaliser,
     space: AddressSpaceId,
+    translator: &'a Translator,
     unique_base: u64,
 }
 
-struct VariableNormaliserVisitor {
+struct VariableAddrNormVisitor<'a> {
+    temp_space: AddressSpaceId,
+    translator: &'a Translator,
+}
+
+impl<'a> VariableAddrNormVisitor<'a> {
+    fn new(space: AddressSpaceId, translator: &'a Translator) -> Self {
+        Self {
+            temp_space: space,
+            translator,
+        }
+    }
+
+    fn should_transform(&self, var: &Var) -> bool {
+        let spc = var.space();
+        !(spc.is_unique() || spc.is_register() || spc == self.temp_space)
+    }
+
+    fn transform<Loc, F>(&mut self, expr: &mut ExprT<Loc, BitVec, Var>, f: F)
+    where F: Fn(&mut ExprT<Loc, BitVec, Var>, ExprT<Loc, BitVec, Var>, usize, &AddressSpace) {
+        match expr {
+            ExprT::Var(var) => if self.should_transform(&var) {
+                let space_id = var.space();
+                let space = self.translator.manager().unchecked_space_by_id(space_id);
+                let size = var.bits();
+
+                let source = if space.word_size() > 1 {
+                    let d = ExprT::from(BitVec::from_u64(var.offset(), space.address_size() * 8));
+                    let bits = d.bits();
+
+                    let w = ExprT::from(BitVec::from_usize(space.word_size(), bits));
+
+                    ExprT::int_mul(d, w)
+                } else {
+                    ExprT::from(BitVec::from_u64(var.offset(), space.address_size() * 8))
+                };
+
+                f(expr, source, size, space)
+            },
+            _ => self.visit_expr_mut(expr),
+        }
+    }
+}
+
+impl<'a, 'ecode, Loc> VisitMut<'ecode, Loc, BitVec, Var> for VariableAddrNormVisitor<'a> {
+    fn visit_branch_target_computed_mut(&mut self, expr: &'ecode mut ExprT<Loc, BitVec, Var>) {
+        match expr {
+            ExprT::Var(_) => {
+                self.transform(expr, |expr, nexpr, sz, spc| {
+                    *expr = ExprT::load(nexpr, sz, spc);
+                })
+            },
+            ExprT::Cast(texpr, Cast::Pointer(_, _)) => {
+                self.transform(texpr, |expr, nexpr, sz, spc| {
+                    *expr = ExprT::load(nexpr, sz, spc);
+                })
+            }
+            _ => self.visit_expr_mut(expr),
+        }
+    }
+
+    fn visit_expr_mut(&mut self, expr: &'ecode mut ExprT<Loc, BitVec, Var>) {
+        match expr {
+            ExprT::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
+            ExprT::UnOp(op, ref mut expr) => self.visit_expr_unop_mut(*op, expr),
+            ExprT::BinRel(op, ref mut lexpr, ref mut rexpr) => {
+                self.visit_expr_binrel_mut(*op, lexpr, rexpr)
+            }
+            ExprT::BinOp(op, ref mut lexpr, ref mut rexpr) => {
+                self.visit_expr_binop_mut(*op, lexpr, rexpr)
+            }
+            ExprT::Cast(ref mut expr, ref mut cast) => self.visit_expr_cast_mut(expr, cast),
+            ExprT::Load(ref mut expr, size, space) => {
+                self.visit_expr_load_mut(expr, *size, *space)
+            }
+            ExprT::ExtractLow(ref mut expr, bits) => self.visit_expr_extract_low_mut(expr, *bits),
+            ExprT::ExtractHigh(ref mut expr, bits) => self.visit_expr_extract_high_mut(expr, *bits),
+            ExprT::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
+            ExprT::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
+            ExprT::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
+            ExprT::Call(ref mut branch_target, ref mut args, bits) => {
+                self.visit_expr_call_mut(branch_target, args, *bits)
+            }
+            ExprT::Intrinsic(ref name, ref mut args, bits) => {
+                self.visit_expr_intrinsic_mut(name, args, *bits)
+            }
+            ExprT::Var(ref mut var) => if self.should_transform(var) {
+                // transform into a load
+                let space_id = var.space();
+                let space = self.translator.manager().unchecked_space_by_id(space_id);
+                let size = var.bits();
+
+                let source = if space.word_size() > 1 {
+                    let d = ExprT::from(BitVec::from_u64(var.offset(), space.address_size() * 8));
+                    let bits = d.bits();
+
+                    let w = ExprT::from(BitVec::from_usize(space.word_size(), bits));
+
+                    ExprT::int_mul(d, w)
+                } else {
+                    ExprT::from(BitVec::from_u64(var.offset(), space.address_size() * 8))
+                };
+
+                *expr = ExprT::load(source, size, space);
+            },
+            ExprT::Val(_) => (),
+        }
+    }
+
+    fn visit_stmt_mut(&mut self, stmt: &'ecode mut StmtT<Loc, BitVec, Var>) {
+        let mut def = StmtT::Skip;
+
+        // NOTE: we swap to enable moves out of stmt
+        std::mem::swap(&mut def, stmt);
+
+        match def {
+            StmtT::Assign(ref mut var, expr) if self.should_transform(var) => {
+                // transform into a store
+                let space_id = var.space();
+                let space = self.translator.manager().unchecked_space_by_id(space_id);
+                let size = var.bits();
+
+                let destination = if space.word_size() > 1 {
+                    let d = ExprT::from(BitVec::from_u64(var.offset(), space.address_size() * 8));
+                    let bits = d.bits();
+
+                    let w = ExprT::from(BitVec::from_usize(space.word_size(), bits));
+
+                    ExprT::int_mul(d, w)
+                } else {
+                    ExprT::from(BitVec::from_u64(var.offset(), space.address_size() * 8))
+                };
+
+                def = StmtT::store(destination, expr, size, space);
+            },
+            StmtT::Assign(ref mut var, ref mut expr) => {
+                self.visit_stmt_assign_mut(var, expr)
+            },
+            StmtT::Store(ref mut loc, ref mut val, size, space) => {
+                self.visit_stmt_store_mut(loc, val, size, space)
+            }
+            StmtT::Branch(ref mut branch_target) => self.visit_stmt_branch_mut(branch_target),
+            StmtT::CBranch(ref mut cond, ref mut branch_target) => {
+                self.visit_stmt_cbranch_mut(cond, branch_target)
+            }
+            StmtT::Call(ref mut branch_target, ref mut args) => self.visit_stmt_call_mut(branch_target, args),
+            StmtT::Return(ref mut branch_target) => self.visit_stmt_return_mut(branch_target),
+            StmtT::Skip => <Self as VisitMut<Loc, BitVec, Var>>::visit_stmt_skip_mut(self),
+            StmtT::Intrinsic(ref name, ref mut args) => self.visit_stmt_intrinsic_mut(name, args),
+        }
+
+        std::mem::swap(&mut def, stmt);
+    }
+}
+
+struct VariableTempNormVisitor {
     mapping: BTreeMap<u64, u64>,
     space: AddressSpaceId,
     unique_base: u64,
 }
 
-impl VariableNormaliserVisitor {
+impl VariableTempNormVisitor {
     fn new(unique_base: u64, space: AddressSpaceId) -> Self {
         Self {
             mapping: BTreeMap::new(),
@@ -288,7 +447,7 @@ impl VariableNormaliserVisitor {
     }
 }
 
-impl<'ecode, Loc, Val> VisitMut<'ecode, Loc, Val, Var> for VariableNormaliserVisitor {
+impl<'ecode, Loc, Val> VisitMut<'ecode, Loc, Val, Var> for VariableTempNormVisitor {
     fn visit_var_mut(&mut self, var: &'ecode mut Var) {
         if var.space().is_unique() {
             let mut unique_base = self.unique_base;
@@ -305,17 +464,18 @@ impl<'ecode, Loc, Val> VisitMut<'ecode, Loc, Val, Var> for VariableNormaliserVis
     }
 }
 
-impl VariableNormaliser {
-    pub fn new<T: Borrow<Translator>>(translator: T) -> Self {
-        let translator = translator.borrow();
+impl<'a> VariableNormaliser<'a> {
+    pub fn new(translator: &'a Translator) -> Self {
         Self::new_with(translator, translator.manager().unique_space_id())
     }
 
-    pub fn new_with<T: Borrow<Translator>>(translator: T, space: AddressSpaceId) -> Self {
+    pub fn new_with(translator: &'a Translator, space: AddressSpaceId) -> Self {
+        let translator = translator.borrow();
         Self {
             alias_normaliser: VariableAliasNormaliser::new(translator),
             space,
             unique_base: 0,
+            translator,
         }
     }
 
@@ -330,13 +490,15 @@ impl VariableNormaliser {
     fn transform_ecode(&mut self, ecode: &mut ECode) {
         self.alias_normaliser.transform_ecode(ecode);
 
-        let mut visitor = VariableNormaliserVisitor::new(self.unique_base, self.space);
+        let mut tn_visitor = VariableTempNormVisitor::new(self.unique_base, self.space);
+        let mut an_visitor = VariableAddrNormVisitor::new(self.space, self.translator);
 
         for op in ecode.operations_mut().iter_mut() {
-            visitor.visit_stmt_mut(op);
+            tn_visitor.visit_stmt_mut(op);
+            an_visitor.visit_stmt_mut(op);
         }
 
-        self.unique_base = visitor.unique_base;
+        self.unique_base = tn_visitor.unique_base;
     }
 }
 

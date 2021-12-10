@@ -138,6 +138,8 @@ where
             }
             ExprT::Cast(ref mut expr, ref mut cast) => self.visit_expr_cast_mut(expr, cast),
             ExprT::Load(ref mut expr, size, space) => self.visit_expr_load_mut(expr, *size, *space),
+            ExprT::ExtractHigh(ref mut expr, bits) => self.visit_expr_extract_high_mut(expr, *bits),
+            ExprT::ExtractLow(ref mut expr, bits) => self.visit_expr_extract_low_mut(expr, *bits),
             ExprT::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
             ExprT::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
             ExprT::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => {

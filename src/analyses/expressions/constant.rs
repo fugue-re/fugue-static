@@ -105,20 +105,10 @@ impl<'ecode, 'a> Visit<'ecode, Location, BitVec, Var> for ConstEvaluator<'ecode,
             Cast::Signed(bits) => self.eval_unary_with(expr, |v| {
                 Some(Cow::Owned((&*v).clone().signed().cast(*bits)))
             }),
-            Cast::Unsigned(bits) => self.eval_unary_with(expr, |v| {
+            Cast::Pointer(_, bits) | Cast::Unsigned(bits) => self.eval_unary_with(expr, |v| {
                 Some(Cow::Owned((&*v).clone().unsigned().cast(*bits)))
             }),
-            Cast::High(bits) => self.eval_unary_with(expr, |v| {
-                Some(Cow::Owned(if *bits >= v.bits() {
-                    v.unsigned_cast(*bits)
-                } else {
-                    (&*v >> (v.bits() as u32 - *bits as u32)).unsigned().cast(*bits)
-                }))
-            }),
-            Cast::Low(bits) => self.eval_unary_with(expr, |v| {
-                Some(Cow::Owned(v.unsigned_cast(*bits)))
-            }),
-            Cast::Float(_) => self.clear_value(),
+            _ => self.clear_value(),
         }
     }
 
@@ -256,6 +246,22 @@ impl<'ecode, 'a> Visit<'ecode, Location, BitVec, Var> for ConstEvaluator<'ecode,
             Some(Cow::Owned(
                 l.unsigned_cast(bits) << (r.bits() as u32) | r.unsigned_cast(bits),
             ))
+        })
+    }
+
+    fn visit_expr_extract_low(&mut self, expr: &'ecode Expr, bits: usize) {
+        self.eval_unary_with(expr, |v| {
+            Some(Cow::Owned(v.unsigned_cast(bits)))
+        })
+    }
+
+    fn visit_expr_extract_high(&mut self, expr: &'ecode Expr, bits: usize) {
+        self.eval_unary_with(expr, |v| {
+            Some(Cow::Owned(if bits >= v.bits() {
+                v.unsigned_cast(bits)
+            } else {
+                (&*v >> (v.bits() as u32 - bits as u32)).unsigned().cast(bits)
+            }))
         })
     }
 

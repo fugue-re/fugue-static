@@ -37,6 +37,10 @@ pub trait VisitMap<'ecode> {
         Cast::Bool
     }
 
+    fn visit_cast_void(&mut self) -> Cast {
+        Cast::Void
+    }
+
     fn visit_cast_float(&mut self, format: Arc<FloatFormat>) -> Cast {
         Cast::Float(format)
     }
@@ -49,22 +53,31 @@ pub trait VisitMap<'ecode> {
         Cast::Unsigned(bits)
     }
 
-    fn visit_cast_truncate_msb(&mut self, bits: usize) -> Cast {
-        Cast::High(bits)
+    fn visit_cast_pointer(&mut self, cast: Cast, bits: usize) -> Cast {
+        Cast::Pointer(Box::new(self.visit_cast(cast)), bits)
     }
 
-    fn visit_cast_truncate_lsb(&mut self, bits: usize) -> Cast {
-        Cast::Low(bits)
+    fn visit_cast_function(&mut self, rtyp: Cast, ptyps: SmallVec<[Box<Cast>; 4]>) -> Cast {
+        Cast::Function(
+            Box::new(self.visit_cast(rtyp)),
+            ptyps.into_iter().map(|ptyp| Box::new(self.visit_cast(*ptyp))).collect(),
+        )
+    }
+
+    fn visit_cast_named(&mut self, cast: Arc<str>, bits: usize) -> Cast {
+        Cast::Named(cast, bits)
     }
 
     fn visit_cast(&mut self, cast: Cast) -> Cast {
         match cast {
             Cast::Bool => self.visit_cast_bool(),
+            Cast::Void => self.visit_cast_void(),
             Cast::Float(format) => self.visit_cast_float(format),
             Cast::Signed(bits) => self.visit_cast_extend_signed(bits),
             Cast::Unsigned(bits) => self.visit_cast_extend_unsigned(bits),
-            Cast::High(bits) => self.visit_cast_truncate_msb(bits),
-            Cast::Low(bits) => self.visit_cast_truncate_lsb(bits),
+            Cast::Pointer(cast, bits) => self.visit_cast_pointer(*cast, bits),
+            Cast::Function(rtyp, ptyps) => self.visit_cast_function(*rtyp, ptyps),
+            Cast::Named(name, bits) => self.visit_cast_named(name, bits),
         }
     }
 
@@ -98,6 +111,14 @@ pub trait VisitMap<'ecode> {
 
     fn visit_expr_load(&mut self, expr: Expr, size: usize, space: AddressSpaceId) -> Expr {
         Expr::Load(Box::new(self.visit_expr(expr)), size, space)
+    }
+
+    fn visit_expr_extract_low(&mut self, expr: Expr, bits: usize) -> Expr {
+        Expr::extract_low(self.visit_expr(expr), bits)
+    }
+
+    fn visit_expr_extract_high(&mut self, expr: Expr, bits: usize) -> Expr {
+        Expr::extract_high(self.visit_expr(expr), bits)
     }
 
     fn visit_expr_extract(&mut self, expr: Expr, lsb: usize, msb: usize) -> Expr {
@@ -163,6 +184,8 @@ pub trait VisitMap<'ecode> {
             Expr::BinOp(op, lexpr, rexpr) => self.visit_expr_binop(op, *lexpr, *rexpr),
             Expr::Cast(expr, cast) => self.visit_expr_cast(*expr, cast),
             Expr::Load(expr, size, space) => self.visit_expr_load(*expr, size, space),
+            Expr::ExtractHigh(expr, bits) => self.visit_expr_extract_high(*expr, bits),
+            Expr::ExtractLow(expr, bits) => self.visit_expr_extract_low(*expr, bits),
             Expr::Extract(expr, lsb, msb) => self.visit_expr_extract(*expr, lsb, msb),
             Expr::Concat(lexpr, rexpr) => self.visit_expr_concat(*lexpr, *rexpr),
             Expr::IfElse(cond, texpr, fexpr) => self.visit_expr_ite(*cond, *texpr, *fexpr),

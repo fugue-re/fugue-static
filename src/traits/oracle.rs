@@ -24,7 +24,7 @@ impl OracleBlockMapping {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn map_block(&mut self, addr: u64, size: usize) {
         let iv = Interval::from(addr..=addr + (size as u64 - 1));
         if self.0.find(&iv).is_some() {
@@ -32,7 +32,7 @@ impl OracleBlockMapping {
         }
         self.0.insert(iv);
     }
-    
+
     pub fn location_bounds(&self, loc: &Location) -> Option<Interval<u64>> {
         self.0.find_point(loc.address().offset())
            .map(|e| Interval::from(*e.interval().start()..=*e.interval().end()))
@@ -49,7 +49,7 @@ pub trait BlockOracle {
     fn block_succs(&self, loc: &Location) -> Option<Vec<Location>> {
         None
     }
-    
+
     #[allow(unused)]
     fn block_identity(&mut self, loc: &Location, id: Id<Block>) { }
 }
@@ -105,7 +105,7 @@ impl FunctionOracle for DatabaseFunctionOracle {
             .map(|addr| translator.address(*addr).into())
             .collect()
     }
-    
+
     fn function_symbol(&self, loc: &Location) -> Option<Cow<'static, str>> {
         self.functions.get(&loc.address().offset())
             .map(|(s, _)| s.to_owned().into())
@@ -120,11 +120,11 @@ impl FunctionOracle for DatabaseFunctionOracle {
 pub fn database_oracles(db: &Database) -> (DatabaseBlockOracle, DatabaseFunctionOracle) {
     let mut dbo = DatabaseBlockOracle::default();
     let mut dbf = DatabaseFunctionOracle::default();
-    
+
     for f in db.functions() {
         let sym = f.name();
         let addr = f.address();
-        
+
         let blks = f.blocks();
         let mut blk_starts = Vec::with_capacity(blks.len());
 
@@ -142,7 +142,7 @@ pub fn database_oracles(db: &Database) -> (DatabaseBlockOracle, DatabaseFunction
 
             blk_starts.push(blk.address());
         }
-        
+
         dbf.functions.insert(addr, (sym.to_owned(), blk_starts));
     }
 

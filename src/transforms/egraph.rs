@@ -2,6 +2,7 @@ use crate::models::Block;
 use crate::traits::Visit;
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use fugue::bv::BitVec;
 use fugue::ir::{AddressValue, Translator};
@@ -50,10 +51,16 @@ define_language! {
         "carry" = Carry([Id; 2]),
         "scarry" = SCarry([Id; 2]),
 
-        "cast-bool" = CastBool(Id),
-        "cast-float" = CastFloat([Id; 2]),
-        "cast-signed" = CastSigned([Id; 2]),
-        "cast-unsigned" = CastUnsigned([Id; 2]),
+        "cast" = Cast([Id; 2]),
+
+        "void" = CastVoid,
+        "bool" = CastBool,
+        "float" = CastFloat(Id),
+        "signed" = CastSigned(Id),
+        "unsigned" = CastUnsigned(Id),
+        "pointer" = CastPtr([Id; 2]), // typ * sz
+        "function" = CastFn(Vec<Id>), // [rtyp, ptyp1, ..., ptypN]
+        "named" = CastNamed([Id; 2]), // name * sz
 
         "extract-high" = ExtractHigh([Id; 2]),
         "extract-low" = ExtractLow([Id; 2]),
@@ -134,20 +141,29 @@ impl Analysis<ECodeLanguage> for ConstantFolding {
                 Some(val.cast(bits))
             },
 
-            // casts
-            L::CastBool(val) => Some(if bv(val)?.is_zero() {
-                BitVec::zero(8)
-            } else {
-                BitVec::one(8)
-            }),
-            L::CastSigned([val, bits]) => {
-                let bits = egraph[*bits].leaves().find_map(|v| v.value())? as usize;
-                Some(bv(val)?.clone().signed().cast(bits))
-            },
-            L::CastUnsigned([val, bits]) => {
-                let bits = egraph[*bits].leaves().find_map(|v| v.value())? as usize;
-                Some(bv(val)?.clone().unsigned().cast(bits))
-            },
+            L::Cast([val, cast]) => match egraph[*cast].leaves().next() {
+                None => None,
+                Some(kind) => match kind {
+                    L::CastBool => Some(if bv(val)?.is_zero() {
+                        BitVec::zero(8)
+                    } else {
+                        BitVec::one(8)
+                    }),
+                    L::CastSigned(bits) => {
+                        let bits = egraph[*bits].leaves().find_map(|v| v.value())? as usize;
+                        Some(bv(val)?.clone().signed().cast(bits))
+                    },
+                    L::CastUnsigned(bits) => {
+                        let bits = egraph[*bits].leaves().find_map(|v| v.value())? as usize;
+                        Some(bv(val)?.clone().unsigned().cast(bits))
+                    },
+                    L::CastPtr([_, bits]) => {
+                        let bits = egraph[*bits].leaves().find_map(|v| v.value())? as usize;
+                        Some(bv(val)?.clone().unsigned().cast(bits))
+                    },
+                    _ => None,
+                }
+            }
 
             // bit-ops
             L::Concat([lhs, rhs]) => {
@@ -357,37 +373,61 @@ impl<'ecode> Visit<'ecode, Location, BitVec, Var> for Rewriter<'ecode> {
         self.add(L::Constant([val, siz]))
     }
 
+    fn visit_cast(&mut self, cast: &'ecode Cast) {
+        use ECodeLanguage as L;
+
+        match cast {
+            Cast::Void => {
+                self.add(L::CastVoid)
+            },
+            Cast::Bool => {
+                self.add(L::CastBool)
+            },
+            Cast::Signed(bits) => {
+                let size = self.graph.add(L::Value(*bits as u64));
+                self.add(L::CastSigned(size))
+            },
+            Cast::Unsigned(bits) => {
+                let size = self.graph.add(L::Value(*bits as u64));
+                self.add(L::CastUnsigned(size))
+            },
+            Cast::Float(ref fmt) => {
+                let size = self.graph.add(L::Value(fmt.bits() as u64));
+                self.add(L::CastFloat(size))
+            },
+            Cast::Pointer(typ, bits) => {
+                self.visit_cast(typ);
+                let tid = self.take_id();
+                let bitsid = self.graph.add(L::Value(*bits as u64));
+                self.add(L::CastPtr([tid, bitsid]))
+            },
+            Cast::Function(rtyp, ptyps) => {
+                self.visit_cast(rtyp);
+                let mut args = vec![self.take_id()];
+                for ptyp in ptyps {
+                    self.visit_cast(ptyp);
+                    args.push(self.take_id());
+                }
+                self.add(L::CastFn(args))
+            },
+            Cast::Named(name, bits) => {
+                let symid = self.graph.add(L::Name(name.into()));
+                let bitsid = self.graph.add(L::Value(*bits as u64));
+                self.add(L::CastNamed([symid, bitsid]))
+            },
+        }
+    }
+
     fn visit_expr_cast(&mut self, expr: &'ecode Expr, cast: &'ecode Cast) {
         use ECodeLanguage as L;
 
         self.visit_expr(expr);
         let exid = self.take_id();
 
-        match cast {
-            Cast::Bool => {
-                self.add(L::CastBool(exid))
-            },
-            Cast::Signed(bits) => {
-                let size = self.graph.add(L::Value(*bits as u64));
-                self.add(L::CastSigned([exid, size]))
-            },
-            Cast::Unsigned(bits) => {
-                let size = self.graph.add(L::Value(*bits as u64));
-                self.add(L::CastUnsigned([exid, size]))
-            },
-            Cast::Float(ref fmt) => {
-                let size = self.graph.add(L::Value(fmt.bits() as u64));
-                self.add(L::CastFloat([exid, size]))
-            },
-            Cast::High(bits) => {
-                let bitsid = self.graph.add(L::Value(*bits as u64));
-                self.add(L::ExtractHigh([exid, bitsid]))
-            },
-            Cast::Low(bits) => {
-                let bitsid = self.graph.add(L::Value(*bits as u64));
-                self.add(L::ExtractLow([exid, bitsid]))
-            },
-        };
+        self.visit_cast(cast);
+        let tid = self.take_id();
+
+        self.add(L::Cast([exid, tid]))
     }
 
     fn visit_expr_unrel(&mut self, op: UnRel, expr: &'ecode Expr) {
@@ -478,6 +518,28 @@ impl<'ecode> Visit<'ecode, Location, BitVec, Var> for Rewriter<'ecode> {
         let spid = self.graph.add(L::Value(space.index() as u64));
 
         self.add(ECodeLanguage::Load([exid, szid, spid]));
+    }
+
+    fn visit_expr_extract_low(&mut self, expr: &'ecode Expr, bits: usize) {
+        use ECodeLanguage as L;
+
+        self.visit_expr(expr);
+        let exid = self.take_id();
+
+        let bitsid = self.graph.add(L::Value(bits as u64));
+
+        self.add(L::ExtractLow([exid, bitsid]))
+    }
+
+    fn visit_expr_extract_high(&mut self, expr: &'ecode Expr, bits: usize) {
+        use ECodeLanguage as L;
+
+        self.visit_expr(expr);
+        let exid = self.take_id();
+
+        let bitsid = self.graph.add(L::Value(bits as u64));
+
+        self.add(L::ExtractHigh([exid, bitsid]))
     }
 
     fn visit_expr_extract(&mut self, expr: &'ecode Expr, lsb: usize, msb: usize) {
@@ -782,6 +844,40 @@ impl<'ecode> Rewriter<'ecode> {
         }
     }
 
+    fn into_cast(translator: &'ecode Translator, nodes: &RecExpr<ECodeLanguage>, i: usize) -> Cast {
+        use ECodeLanguage as L;
+
+        let node = &nodes.as_ref()[i];
+        match node {
+            // casts
+            L::CastVoid => Cast::Void,
+            L::CastBool => Cast::Bool,
+            L::CastFloat(bits) => {
+                let fmt = translator.float_format(Self::into_value(nodes, (*bits).into()) as usize)
+                    .expect("valid float-format");
+                Cast::Float(fmt)
+            },
+            L::CastSigned(bits) => Cast::Signed(Self::into_value(nodes, (*bits).into()) as usize),
+            L::CastUnsigned(bits) => Cast::Unsigned(Self::into_value(nodes, (*bits).into()) as usize),
+            L::CastPtr([cast, bits]) => {
+                let bits = Self::into_value(nodes, (*bits).into()) as usize;
+                let cast = Self::into_cast(translator, nodes, (*cast).into());
+                Cast::Pointer(Box::new(cast), bits)
+            },
+            L::CastFn(typs) => {
+                let rtyp = Self::into_cast(translator, nodes, typs[0].into());
+                let atyps = typs[1..].iter().map(|typ| Box::new(Self::into_cast(translator, nodes, (*typ).into()))).collect();
+                Cast::Function(Box::new(rtyp), atyps)
+            }
+            L::CastNamed([name, bits]) => {
+                let bits = Self::into_value(nodes, (*bits).into()) as usize;
+                let name = Self::into_name(nodes, (*name).into());
+                Cast::Named(Arc::from(name), bits)
+            }
+            _ => panic!("language term {} at index {} is not a cast", node, i)
+        }
+    }
+
     fn into_expr_aux(translator: &'ecode Translator, nodes: &RecExpr<ECodeLanguage>, i: usize) -> Expr {
         use ECodeLanguage as L;
 
@@ -939,22 +1035,9 @@ impl<'ecode> Rewriter<'ecode> {
                 Box::new(Self::into_expr_aux(translator, nodes, (*rhs).into())),
             ),
 
-            // casts
-            L::CastBool(expr) => Expr::cast_bool(
-                Self::into_expr_aux(translator, nodes, (*expr).into())
-            ),
-            L::CastFloat([expr, bits]) => Expr::cast_float(
-                Self::into_expr_aux(translator, nodes, (*expr).into()),
-                translator.float_format(Self::into_value(nodes, (*bits).into()) as usize)
-                    .expect("valid float-format")
-            ),
-            L::CastSigned([expr, bits]) => Expr::cast_signed(
-                Self::into_expr_aux(translator, nodes, (*expr).into()),
-                Self::into_value(nodes, (*bits).into()) as usize,
-            ),
-            L::CastUnsigned([expr, bits]) => Expr::cast_unsigned(
-                Self::into_expr_aux(translator, nodes, (*expr).into()),
-                Self::into_value(nodes, (*bits).into()) as usize,
+            L::Cast([expr, typ]) => Expr::Cast(
+                Box::new(Self::into_expr_aux(translator, nodes, (*expr).into())),
+                Self::into_cast(translator, nodes, (*typ).into())
             ),
 
             // misc

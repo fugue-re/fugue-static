@@ -231,6 +231,7 @@ impl Lifter {
         addr: u64,
         bytes: &[u8],
         size_hint: Option<usize>,
+        merge: bool,
         mut transform: F,
     ) -> (
         Vec<Entity<Block>>,
@@ -397,17 +398,19 @@ impl Lifter {
             }
         }
 
-        // Merge blocks that are not targets of other blocks
-        for index in (1..blks.len()).rev() {
-            if !blks[index - 1].value().last().value().is_branch()
-                && !all_targets.contains(&blks[index].location())
-            {
-                let blk = blks.remove(index).into_value();
-                blks[index - 1]
-                    .value_mut()
-                    .operations
-                    .extend(blk.operations.into_iter());
-                blks[index - 1].value_mut().next_blocks = blk.next_blocks;
+        if merge {
+            // Merge blocks that are not targets of other blocks
+            for index in (1..blks.len()).rev() {
+                if !blks[index - 1].value().last().value().is_branch()
+                    && !all_targets.contains(&blks[index].location())
+                {
+                    let blk = blks.remove(index).into_value();
+                    blks[index - 1]
+                        .value_mut()
+                        .operations
+                        .extend(blk.operations.into_iter());
+                    blks[index - 1].value_mut().next_blocks = blk.next_blocks;
+                }
             }
         }
 

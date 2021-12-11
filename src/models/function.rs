@@ -228,11 +228,11 @@ impl<'trans> FunctionBuilder<'trans> {
         Ok(id)
     }
 
-    pub fn add_block_and_explore<F>(&mut self, address: u64, bytes: &[u8], hint: Option<usize>, transform: F) -> Option<(usize, BTreeSet<Location>)>
+    pub fn add_block_and_explore<F>(&mut self, address: u64, bytes: &[u8], hint: Option<usize>, merge: bool, transform: F) -> Option<(usize, BTreeSet<Location>)>
     where F: FnMut(&mut ECode) {
         let id = self.block_indices.len();
         let rid = self.blocks.len();
-        let (blocks, targets, _, _) = self.lifter.lift_block(&mut self.context_db, address, bytes, hint, transform);
+        let (blocks, targets, _, _) = self.lifter.lift_block(&mut self.context_db, address, bytes, hint, merge, transform);
         if blocks.is_empty() {
             None
         } else {

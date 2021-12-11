@@ -177,6 +177,14 @@ impl Project {
         &mut self,
         location: impl IntoAddress,
     ) -> Result<Id<Function>, ProjectError> {
+        self.add_function_with(location, true)
+    }
+
+    pub fn add_function_with(
+        &mut self,
+        location: impl IntoAddress,
+        merge_blocks: bool,
+    ) -> Result<Id<Function>, ProjectError> {
         let location =
             location.into_address_value(self.lifter.translator().manager().default_space_ref());
         let location = location.into();
@@ -236,6 +244,7 @@ impl Project {
                 blk.address().offset(),
                 bytes,
                 size_hint,
+                merge_blocks,
                 |ecode| ecode.normalise_variables(&mut norm),
             ) {
                 for target in targets

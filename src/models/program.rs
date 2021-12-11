@@ -115,7 +115,7 @@ impl<'db> Program<'db> {
     pub fn function_by_address<'a, C: EntityRefCollector<'a, Function>>(&'a self, address: impl IntoAddress) -> C {
         let address = address.into_address_value(self.translator.manager().default_space_ref());
         let location = Location::new(address, 0);
-        
+
         self.lookup_by_location::<C>(&location)
     }
 
@@ -169,7 +169,7 @@ impl<'db> Program<'db> {
                     if tgt.is_none() {
                         continue;
                     }
-                    
+
                     let tgt = tgt.unwrap();
                     let fall = blk.next_block_entities::<_, Option<_>>(self).unwrap();
 

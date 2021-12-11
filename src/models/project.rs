@@ -1,16 +1,18 @@
-use crate::models::{Block, Function};
-use crate::models::memory::{Memory, Region, RegionIOError};
+use crate::models::function::{Error as FunctionBuilderError, FunctionBuilder};
 use crate::models::lifter::{Lifter, LifterBuilder, LifterBuilderError};
-use crate::models::function::{FunctionBuilder, Error as FunctionBuilderError};
+use crate::models::memory::{Memory, Region, RegionIOError};
+use crate::models::{Block, Function};
+use crate::traits::oracle::*;
 use crate::traits::EntityRefCollector;
 use crate::transforms::{NormaliseVariables, VariableNormaliser};
-use crate::types::{Entity, EntityIdMapping, EntityLocMapping, EntityRef, Id, Identifiable, Locatable};
-use crate::traits::oracle::*;
+use crate::types::{
+    Entity, EntityIdMapping, EntityLocMapping, EntityRef, Id, Identifiable, Locatable,
+};
 
 use fugue::bytes::Endian;
-use fugue::ir::{Address, IntoAddress, Translator};
-use fugue::ir::il::Location;
 use fugue::ir::disassembly::ContextDatabase;
+use fugue::ir::il::Location;
+use fugue::ir::{Address, IntoAddress, Translator};
 
 use std::borrow::{Borrow, Cow};
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,7 +72,8 @@ impl ProjectBuilder {
     ) -> Result<Entity<Project>, ProjectBuilderError> {
         Ok(Project::new(
             name,
-            self.lifter_builder.build_with(processor, endian, bits, variant, convention)?,
+            self.lifter_builder
+                .build_with(processor, endian, bits, variant, convention)?,
         ))
     }
 }
@@ -114,27 +117,30 @@ pub struct Project {
 
 impl Project {
     pub fn new(name: impl Into<Cow<'static, str>>, lifter: Lifter) -> Entity<Self> {
-        Entity::new("project", Self {
-            name: name.into(),
+        Entity::new(
+            "project",
+            Self {
+                name: name.into(),
 
-            disassembly_context: lifter.context(),
-            lifter,
+                disassembly_context: lifter.context(),
+                lifter,
 
-            memory: Memory::new("M"),
+                memory: Memory::new("M"),
 
-            blk_oracle: None,
-            fcn_oracle: None,
-            fcn_oracle_starts: Default::default(),
+                blk_oracle: None,
+                fcn_oracle: None,
+                fcn_oracle_starts: Default::default(),
 
-            blks: Default::default(),
-            blks_to_locs: Default::default(),
-            locs_to_blks: Default::default(),
+                blks: Default::default(),
+                blks_to_locs: Default::default(),
+                locs_to_blks: Default::default(),
 
-            fcns: Default::default(),
-            fcns_to_locs: Default::default(),
-            locs_to_fcns: Default::default(),
-            syms_to_fcns: Default::default(),
-        })
+                fcns: Default::default(),
+                fcns_to_locs: Default::default(),
+                locs_to_fcns: Default::default(),
+                syms_to_fcns: Default::default(),
+            },
+        )
     }
 
     pub fn set_block_oracle<O: BlockOracle + 'static>(&mut self, oracle: O) {
@@ -143,7 +149,12 @@ impl Project {
 
     pub fn set_function_oracle<O: FunctionOracle + 'static>(&mut self, oracle: O) {
         let oracle = Arc::new(RwLock::new(oracle));
-        self.fcn_oracle_starts.extend(oracle.read().function_starts(self.lifter.translator()).into_iter());
+        self.fcn_oracle_starts.extend(
+            oracle
+                .read()
+                .function_starts(self.lifter.translator())
+                .into_iter(),
+        );
         self.fcn_oracle = Some(oracle);
     }
 
@@ -158,42 +169,82 @@ impl Project {
         endian: Endian,
         bytes: impl Into<Vec<u8>>,
     ) {
-        self.memory.add_region(Region::new(name, addr, endian, bytes));
+        self.memory
+            .add_region(Region::new(name, addr, endian, bytes));
     }
 
-    pub fn add_function(&mut self, location: impl IntoAddress) -> Result<Id<Function>, ProjectError> {
-        let location = location.into_address_value(self.lifter.translator().manager().default_space_ref());
+    pub fn add_function(
+        &mut self,
+        location: impl IntoAddress,
+    ) -> Result<Id<Function>, ProjectError> {
+        let location =
+            location.into_address_value(self.lifter.translator().manager().default_space_ref());
         let location = location.into();
         if !self.fcn_oracle_starts.contains(&location) {
-            return Err(ProjectError::FunctionOracleInconsistent(location))
+            return Err(ProjectError::FunctionOracleInconsistent(location));
         }
 
-        let sym = self.fcn_oracle.as_ref().and_then(|o| o.read().function_symbol(&location))
+        let sym = self
+            .fcn_oracle
+            .as_ref()
+            .and_then(|o| o.read().function_symbol(&location))
             .unwrap_or_else(|| Cow::from(format!("sub_{}", location.address())));
 
-        let mut norm = VariableNormaliser::new_with(self.lifter.translator(), self.lifter().temporary_space_id());
+        let mut norm = VariableNormaliser::new_with(
+            self.lifter.translator(),
+            self.lifter().temporary_space_id(),
+        );
 
         let mut fcn_builder = FunctionBuilder::new(
-            self.lifter.translator(),
+            &self.lifter,
             &mut self.disassembly_context,
             location.address().offset(),
             &*sym,
         );
 
-        let blks = self.fcn_oracle.as_ref().and_then(|o| o.read().function_blocks(&location))
+        let mut blks = self
+            .fcn_oracle
+            .as_ref()
+            .and_then(|o| o.read().function_blocks(&location))
             .unwrap_or_default();
 
+        let mut seen = BTreeSet::new();
 
-        for blk in blks.into_iter() {
+        while let Some(blk) = blks.pop() {
             let addr = blk.address();
             let basic_addr = Address::from(&*addr);
-            let region = self.memory.find_region(&basic_addr)
-                .ok_or_else(|| ProjectError::BlockOracleUnmappedBounds(blk.clone()))?;
-            let size_hint = self.blk_oracle.as_ref().and_then(|o| o.read().block_size(&blk))
-                .ok_or_else(|| ProjectError::BlockOracleUnsized(blk.clone()))?;
 
-            let bytes = region.view_bytes(&basic_addr, size_hint)?;
-            fcn_builder.add_block_with(blk.address().offset(), bytes, |ecode| ecode.normalise_variables(&mut norm))?;
+            if seen.contains(&basic_addr) {
+                continue;
+            } else {
+                seen.insert(basic_addr);
+            }
+
+            let region = self
+                .memory
+                .find_region(&basic_addr)
+                .ok_or_else(|| ProjectError::BlockOracleUnmappedBounds(blk.clone()))?;
+            let size_hint = self
+                .blk_oracle
+                .as_ref()
+                .and_then(|o| o.read().block_size(&blk))
+                .and_then(|s| if s == 0 { None } else { Some(s) });
+
+            let bytes = region.view_bytes_from(&basic_addr)?;
+
+            if let Some((_, targets)) = fcn_builder.add_block_and_explore(
+                blk.address().offset(),
+                bytes,
+                size_hint,
+                |ecode| ecode.normalise_variables(&mut norm),
+            ) {
+                for target in targets
+                    .into_iter()
+                    .filter(|loc| !seen.contains(&Address::from(&*loc.address())))
+                {
+                    blks.push(target);
+                }
+            }
         }
 
         let (fcn, blks) = fcn_builder.build();
@@ -238,7 +289,11 @@ impl EntityIdMapping<Block> for Project {
 }
 
 impl EntityLocMapping<Block> for Project {
-    fn lookup_by_location_with<'a, C: EntityRefCollector<'a, Block>>(&'a self, loc: &Location, collect: &mut C) {
+    fn lookup_by_location_with<'a, C: EntityRefCollector<'a, Block>>(
+        &'a self,
+        loc: &Location,
+        collect: &mut C,
+    ) {
         if let Some(ids) = self.locs_to_blks.get(loc) {
             for id in ids.iter() {
                 if let Some(e) = self.lookup_by_id(*id) {
@@ -256,7 +311,11 @@ impl EntityIdMapping<Function> for Project {
 }
 
 impl EntityLocMapping<Function> for Project {
-    fn lookup_by_location_with<'a, C: EntityRefCollector<'a, Function>>(&'a self, loc: &Location, collect: &mut C) {
+    fn lookup_by_location_with<'a, C: EntityRefCollector<'a, Function>>(
+        &'a self,
+        loc: &Location,
+        collect: &mut C,
+    ) {
         if let Some(id) = self.locs_to_fcns.get(loc) {
             if let Some(e) = self.lookup_by_id(*id) {
                 collect.insert(e);

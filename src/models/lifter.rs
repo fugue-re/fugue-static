@@ -1,8 +1,8 @@
 use fugue::bytes::Endian;
 use fugue::ir::convention::Convention;
 use fugue::ir::disassembly::ContextDatabase;
+use fugue::ir::il::ecode::{BranchTarget, ECode, Stmt, Var};
 use fugue::ir::il::Location;
-use fugue::ir::il::ecode::{BranchTarget, Stmt, Var};
 use fugue::ir::{AddressSpace, AddressSpaceId, LanguageDB, Translator};
 
 use std::borrow::Cow;
@@ -14,7 +14,9 @@ use thiserror::Error;
 use crate::models::Block;
 use crate::traits::ecode::*;
 use crate::traits::stmt::*;
-use crate::types::{Entity, Identifiable, Locatable, LocatableId, Located, LocationTarget, VarView};
+use crate::types::{
+    Entity, Identifiable, Locatable, LocatableId, Located, LocationTarget, VarView,
+};
 
 #[derive(Clone)]
 pub struct LifterBuilder {
@@ -223,13 +225,22 @@ impl Lifter {
     // this representation enables us to avoid splitting blocks at a later
     // stage and allows us to build a mapping between each instruction and its
     // blocks.
-    pub fn lift_block(
+    pub fn lift_block<F>(
         &self,
         ctxt: &mut ContextDatabase,
         addr: u64,
         bytes: &[u8],
         size_hint: Option<usize>,
-    ) -> (Vec<Entity<Block>>, BTreeSet<Location>, usize) {
+        mut transform: F,
+    ) -> (
+        Vec<Entity<Block>>,
+        BTreeSet<Location>,
+        BTreeSet<Location>,
+        usize,
+    )
+    where
+        F: FnMut(&mut ECode),
+    {
         let actual_size = bytes.len();
         let attempt_size = size_hint
             .map(|hint| actual_size.min(hint))
@@ -238,12 +249,15 @@ impl Lifter {
         let bytes = &bytes[..attempt_size];
 
         log::debug!(
-            "lifting statements at {:x} with size boundary of {}",
+            "lifting statements at {:x} with size boundary of {} (actual: {})",
             addr,
-            attempt_size
+            attempt_size,
+            actual_size,
         );
 
         let mut all_targets = BTreeSet::default();
+        let mut fcn_targets = BTreeSet::default();
+
         let mut blks = Vec::new();
         let mut offset = 0;
 
@@ -286,18 +300,23 @@ impl Lifter {
                     match target {
                         ECodeTarget::IntraIns(loc, _) => {
                             local_targets.push(loc.position());
-                        },
-                        ECodeTarget::IntraBlk(loc, false) => { // only inter-blk that isn't fall
+                        }
+                        ECodeTarget::InterBlk(BranchTarget::Location(loc))
+                        | ECodeTarget::IntraBlk(loc, false) => {
+                            // only inter-blk that isn't fall
+                            fcn_targets.insert(loc.clone());
                             all_targets.insert(loc);
-                        },
-                        ECodeTarget::InterBlk(BranchTarget::Location(loc)) |
-                        ECodeTarget::InterSub(BranchTarget::Location(loc)) |
-                        ECodeTarget::InterRet(BranchTarget::Location(loc), _) => {
+                        }
+                        ECodeTarget::InterSub(BranchTarget::Location(loc))
+                        | ECodeTarget::InterRet(BranchTarget::Location(loc), _) => {
                             all_targets.insert(loc);
-                        },
+                        }
                         _ => (),
                     }
                 }
+
+                // Transformation pass on ECode
+                transform(&mut ecode);
 
                 // Sort in descending order
                 local_targets.sort_by(|u, v| u.cmp(&v).reverse());
@@ -405,7 +424,7 @@ impl Lifter {
             }
         }
 
-        (blks, all_targets, offset)
+        (blks, fcn_targets, all_targets, offset)
     }
 }
 
@@ -420,31 +439,40 @@ mod test {
         let path = Path::new("./processors");
 
         let builder = LifterBuilder::new(&path)?;
-        let lifter = builder.build("x86:LE:32:default", "gcc")?;
+        let lifter = builder.build("x86:LE:64:default", "gcc")?;
 
         let mut ctxt = lifter.context();
 
-        let mut lift = |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, None);
+        let mut lift =
+            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, None, |_| ());
 
-        let (blks1, _, len1) = lift(0x1000, &[0x90u8]);
+        let (blks1, _, _, len1) = lift(0x1000, &[0x90u8]);
         assert_eq!(blks1.len(), 1);
         assert_eq!(len1, 1);
 
-        let (blks2, _, len2) = lift(0x1001, &[0xf3u8, 0xaau8, 0x90u8]);
-        assert_eq!(blks2.len(), 3); // stosb .. gives two blocks
-        assert_eq!(len2, 3);
-
-        let (blks3, _, len3) = lift(0x1004, &[0x50, 0xF3, 0xAA, 0x53, 0xFF, 0x13, 0x0F, 0x85, 0xFC, 0x00, 0x00, 0x00]);
+        let (blks3, _, _, len3) = lift(
+            0x1004,
+            &[
+                0x50, 0xF3, 0xAA, 0x53, 0xFF, 0x13, 0x0F, 0x85, 0xFC, 0x00, 0x00, 0x00,
+            ],
+        );
         assert_eq!(blks3.len(), 4);
         assert_eq!(len3, 12);
 
-        let (blks4, _, len4) = lift(0x1010, &[0xE9, 0xFC, 0x00, 0x00, 0x00]);
+        let (blks4, _, _, len4) = lift(0x1010, &[0xE9, 0xFC, 0x00, 0x00, 0x00]);
         assert_eq!(blks4.len(), 1);
         assert_eq!(len4, 5);
 
-        let (blks5, _, len5) = lift(0x1015, &[0x5B, 0xC2, 0x04, 0x00]);
+        let (blks5, _, _, len5) = lift(0x1015, &[0x5B, 0xC2, 0x04, 0x00]);
         assert_eq!(blks5.len(), 1);
         assert_eq!(len5, 4);
+
+        let mut lift2 =
+            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, Some(2), |_| ());
+
+        let (blks2, _, _, len2) = lift2(0x1001, &[0x8b, 0xc7, 0x5f, 0x5e]);
+        assert_eq!(blks2.len(), 1); // stosb .. gives two blocks
+        assert_eq!(len2, 2);
 
         Ok(())
     }

@@ -9,7 +9,7 @@ use fugue::ir::il::ecode::{BranchTargetT, ECode, Location, StmtT, Var};
 use fugue::ir::il::traits::*;
 
 use crate::models::cfg::{BranchKind, CFG};
-use crate::models::{Block, BlockT, BlockLifter};
+use crate::models::{Block, BlockT, BlockLifter, Lifter};
 use crate::traits::{BlockOracle, StmtExt};
 use crate::traits::oracle::NullOracle;
 use crate::types::{Id, Identifiable, LocationTarget, Locatable, LocatableId, Entity, EntityIdMapping, EntityLocMapping};
@@ -195,7 +195,7 @@ where
 }
 
 pub struct FunctionBuilder<'trans> {
-    translator: &'trans Translator,
+    lifter: &'trans Lifter,
     context_db: &'trans mut ContextDatabase,
     symbol: String,
     address: u64,
@@ -204,9 +204,9 @@ pub struct FunctionBuilder<'trans> {
 }
 
 impl<'trans> FunctionBuilder<'trans> {
-    pub fn new(translator: &'trans Translator, context_db: &'trans mut ContextDatabase, address: u64, symbol: impl Into<String>) -> Self {
+    pub fn new(lifter: &'trans Lifter, context_db: &'trans mut ContextDatabase, address: u64, symbol: impl Into<String>) -> Self {
         Self {
-            translator,
+            lifter,
             context_db,
             symbol: symbol.into(),
             address,
@@ -223,9 +223,23 @@ impl<'trans> FunctionBuilder<'trans> {
     where F: FnMut(&mut ECode) {
         let id = self.block_indices.len();
         let rid = self.blocks.len();
-        self.blocks.extend(Block::new_with(&self.translator, &mut self.context_db, address, bytes, transform)?);
+        self.blocks.extend(Block::new_with(&self.lifter.translator(), &mut self.context_db, address, bytes, transform)?);
         self.block_indices.push(rid);
         Ok(id)
+    }
+
+    pub fn add_block_and_explore<F>(&mut self, address: u64, bytes: &[u8], hint: Option<usize>, transform: F) -> Option<(usize, BTreeSet<Location>)>
+    where F: FnMut(&mut ECode) {
+        let id = self.block_indices.len();
+        let rid = self.blocks.len();
+        let (blocks, targets, _, _) = self.lifter.lift_block(&mut self.context_db, address, bytes, hint, transform);
+        if blocks.is_empty() {
+            None
+        } else {
+            self.blocks.extend(blocks);
+            self.block_indices.push(rid);
+            Some((id, targets))
+        }
     }
 
     pub fn block(&self, id: usize) -> Option<&[Entity<Block>]> {
@@ -247,7 +261,7 @@ impl<'trans> FunctionBuilder<'trans> {
     }
 
     pub fn build(self) -> (Entity<Function>, Vec<Entity<Block>>) {
-        let id = LocatableId::new("fcn", Location::new(self.translator.address(self.address), 0));
+        let id = LocatableId::new("fcn", Location::new(self.lifter.translator().address(self.address), 0));
         let mut block_ids = HashMap::default();
 
         for blk in self.blocks.iter() {

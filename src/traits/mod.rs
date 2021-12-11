@@ -4,6 +4,9 @@ pub use collect::{EntityRefCollector, ValueRefCollector, ValueMutCollector};
 pub mod interval;
 pub use interval::AsInterval;
 
+pub mod ecode;
+pub use ecode::{ECodeExt, ECodeTarget};
+
 pub mod oracle;
 pub use oracle::{BlockOracle, FunctionOracle};
 

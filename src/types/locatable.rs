@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::{Deref, DerefMut};
 use std::fmt::{self, Debug, Display};
 
-use crate::types::{Id, EntityIdMapping, EntityLocMapping, EntityRef};
+use crate::types::{Id, EntityIdMapping, EntityLocMapping, EntityRef, Erased};
 
 pub trait Locatable {
     fn location(&self) -> Location;
@@ -229,6 +229,10 @@ impl<T> LocationTarget<T> {
             Self::Fixed(loc) => LocationTarget::Fixed(loc),
             Self::Computed(expr, pos) => LocationTarget::Computed(expr, pos),
         }
+    }
+
+    pub fn erase(self) -> LocationTarget<Erased> {
+        self.retype()
     }
 
     pub fn is_determined(&self) -> bool {

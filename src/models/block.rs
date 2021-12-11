@@ -36,17 +36,17 @@ where
     Var: Clone,
 {
     #[serde(bound(deserialize = "LocatableId<BlockT<Loc, Val, Var>>: serde::Deserialize<'de>"))]
-    id: LocatableId<BlockT<Loc, Val, Var>>,
+    pub(crate) id: LocatableId<BlockT<Loc, Val, Var>>,
     #[serde(bound(deserialize = "Entity<Located<PhiT<Var>>>: serde::Deserialize<'de>"))]
-    phis: Vec<Entity<Located<PhiT<Var>>>>,
+    pub(crate) phis: Vec<Entity<Located<PhiT<Var>>>>,
     #[serde(bound(
         deserialize = "Entity<Located<StmtT<Loc, Val, Var>>>: serde::Deserialize<'de>"
     ))]
-    operations: Vec<Entity<Located<StmtT<Loc, Val, Var>>>>,
+    pub(crate) operations: Vec<Entity<Located<StmtT<Loc, Val, Var>>>>,
     #[serde(bound(
         deserialize = "LocationTarget<BlockT<Loc, Val, Var>>: serde::Deserialize<'de>"
     ))]
-    next_blocks: Vec<LocationTarget<BlockT<Loc, Val, Var>>>,
+    pub(crate) next_blocks: Vec<LocationTarget<BlockT<Loc, Val, Var>>>,
 }
 
 impl<Loc, Val, Var> Identifiable<BlockT<Loc, Val, Var>> for BlockT<Loc, Val, Var>

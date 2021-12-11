@@ -2,7 +2,6 @@ use crate::models::Block;
 use crate::traits::Visit;
 
 use std::borrow::Cow;
-use std::sync::Arc;
 
 use fugue::bv::BitVec;
 use fugue::ir::{AddressValue, Translator};
@@ -872,7 +871,7 @@ impl<'ecode> Rewriter<'ecode> {
             L::CastNamed([name, bits]) => {
                 let bits = Self::into_value(nodes, (*bits).into()) as usize;
                 let name = Self::into_name(nodes, (*name).into());
-                Cast::Named(Arc::from(name), bits)
+                Cast::Named(name.as_ref().into(), bits)
             }
             _ => panic!("language term {} at index {} is not a cast", node, i)
         }
@@ -1089,7 +1088,7 @@ impl<'ecode> Rewriter<'ecode> {
                 let size = Self::into_value(nodes, parts[1].into()) as usize;
 
                 Expr::intrinsic(
-                    name.into(),
+                    name.as_ref(),
                     parts[2..].iter().map(|arg| Self::into_expr_aux(translator, nodes, (*arg).into())),
                     size,
                 )
@@ -1131,7 +1130,7 @@ impl<'ecode> Rewriter<'ecode> {
                 let name = Self::into_name(nodes, parts[0].into());
 
                 Stmt::intrinsic(
-                    name.into(),
+                    &*name,
                     parts[2..].iter().map(|arg| Self::into_expr_aux(translator, nodes, (*arg).into())),
                 )
             },

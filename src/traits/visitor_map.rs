@@ -6,6 +6,7 @@ use fugue::ir::space::AddressSpaceId;
 
 use smallvec::SmallVec;
 use std::sync::Arc;
+use ustr::Ustr;
 
 pub trait VisitMap<'ecode> {
     fn visit_val(&mut self, bv: BitVec) -> BitVec {
@@ -64,7 +65,7 @@ pub trait VisitMap<'ecode> {
         )
     }
 
-    fn visit_cast_named(&mut self, cast: Arc<str>, bits: usize) -> Cast {
+    fn visit_cast_named(&mut self, cast: Ustr, bits: usize) -> Cast {
         Cast::Named(cast, bits)
     }
 
@@ -155,7 +156,7 @@ pub trait VisitMap<'ecode> {
     #[allow(unused_variables)]
     fn visit_expr_intrinsic(
         &mut self,
-        name: Arc<str>,
+        name: Ustr,
         args: SmallVec<[Box<Expr>; 4]>,
         bits: usize,
     ) -> Expr {
@@ -236,7 +237,7 @@ pub trait VisitMap<'ecode> {
         Stmt::Skip
     }
 
-    fn visit_stmt_intrinsic(&mut self, name: Arc<str>, args: SmallVec<[Expr; 4]>) -> Stmt {
+    fn visit_stmt_intrinsic(&mut self, name: Ustr, args: SmallVec<[Expr; 4]>) -> Stmt {
         Stmt::Intrinsic(
             name,
             args.into_iter().map(|arg| self.visit_expr(arg)).collect(),

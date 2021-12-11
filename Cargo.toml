@@ -1,6 +1,6 @@
 [package]
 name = "fugue-static"
-version = "0.2.47"
+version = "0.2.48"
 authors = ["Sam Thomas <st@xv.ax>"]
 edition = "2018"
 
@@ -21,3 +21,4 @@ simhash = { version = "0.1", registry = "fugue" }
 serde = { version = "1", features = ["derive"] }
 smallvec = "1"
 thiserror = "1"
+ustr = { version = "0.8", features = ["serialization"] }

@@ -117,7 +117,7 @@ pub enum LifterError {
 }
 
 impl Lifter {
-    fn new(mut translator: Translator, convention: Convention) -> Self {
+    pub fn new(mut translator: Translator, convention: Convention) -> Self {
         let (register_space, register_index) = VarView::registers(&translator);
         let default_space = translator.manager().default_space();
 
@@ -137,7 +137,7 @@ impl Lifter {
         let program_counter = Var::new(
             translator.manager().register_space_ref(),
             translator.program_counter().offset(),
-            translator.program_counter().size(),
+            translator.program_counter().size() * 8,
             0,
         );
 
@@ -145,7 +145,7 @@ impl Lifter {
         let stack_pointer = Var::new(
             translator.manager().register_space_ref(),
             conv_sp.varnode().offset(),
-            conv_sp.varnode().size(),
+            conv_sp.varnode().size() * 8,
             0,
         );
 
@@ -160,6 +160,18 @@ impl Lifter {
             program_counter,
             stack_pointer,
         }
+    }
+
+    pub fn program_counter(&self) -> Var {
+        self.program_counter
+    }
+
+    pub fn stack_pointer(&self) -> Var {
+        self.stack_pointer
+    }
+
+    pub fn convention(&self) -> &Convention {
+        &self.convention
     }
 
     pub fn context(&self) -> ContextDatabase {
@@ -447,7 +459,7 @@ mod test {
         let mut ctxt = lifter.context();
 
         let mut lift =
-            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, None, |_| ());
+            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, None, true, |_| ());
 
         let (blks1, _, _, len1) = lift(0x1000, &[0x90u8]);
         assert_eq!(blks1.len(), 1);
@@ -471,7 +483,7 @@ mod test {
         assert_eq!(len5, 4);
 
         let mut lift2 =
-            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, Some(2), |_| ());
+            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, Some(2), true, |_| ());
 
         let (blks2, _, _, len2) = lift2(0x1001, &[0x8b, 0xc7, 0x5f, 0x5e]);
         assert_eq!(blks2.len(), 1); // stosb .. gives two blocks

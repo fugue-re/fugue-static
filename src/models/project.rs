@@ -10,8 +10,10 @@ use crate::types::{
 };
 
 use fugue::bytes::Endian;
+use fugue::ir::convention::Convention;
 use fugue::ir::disassembly::ContextDatabase;
 use fugue::ir::il::Location;
+use fugue::ir::il::ecode::Var;
 use fugue::ir::{Address, IntoAddress, Translator};
 
 use std::borrow::{Borrow, Cow};
@@ -288,6 +290,18 @@ impl Project {
 
     pub fn lifter(&self) -> &Lifter {
         &self.lifter
+    }
+
+    pub fn program_counter(&self) -> Var {
+        self.lifter.program_counter()
+    }
+
+    pub fn stack_pointer(&self) -> Var {
+        self.lifter.stack_pointer()
+    }
+
+    pub fn convention(&self) -> &Convention {
+        self.lifter.convention()
     }
 }
 

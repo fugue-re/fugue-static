@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fugue::ir::convention::Convention;
-use fugue::ir::il::ecode::{Stmt, Var, Expr, BinOp};
+use fugue::ir::il::ecode::{BinOp, Expr, Stmt, Var};
 use good_lp::*;
 
-use crate::graphs::AsEntityGraph;
 use crate::graphs::entity::VertexIndex;
-use crate::models::{Block, Phi};
+use crate::graphs::AsEntityGraph;
 use crate::models::cfg::BranchKind;
+use crate::models::{Block, Phi};
 use crate::traits::stmt::*;
 use crate::types::{EntityRef, Identifiable, IntoEntityRef, Located, SimpleVar};
 
@@ -52,7 +52,9 @@ fn constant(expr: &Expr) -> Option<i64> {
 
 impl<'a> StackOffsets<'a> {
     pub fn analyse_with<G>(g: &'a G, tracked: &Var, convention: &Convention) -> Option<Self>
-    where G: AsEntityGraph<'a, Block, BranchKind> {
+    where
+        G: AsEntityGraph<'a, Block, BranchKind>,
+    {
         let g = g.entity_graph();
 
         let mut vars = BTreeMap::<VertexIndex<_>, _>::default();
@@ -64,12 +66,13 @@ impl<'a> StackOffsets<'a> {
         let tracked = SimpleVar::from(tracked);
         let extra_pop = convention.default_prototype().extra_pop() as f64;
 
-        let is_tracked = |expr: &Expr| {
-            matches!(expr, Expr::Var(v) if SimpleVar::from(v) == tracked)
-        };
+        let is_tracked =
+            |expr: &Expr| matches!(expr, Expr::Var(v) if SimpleVar::from(v) == tracked);
 
-        let roots = g.root_entities()
-            .into_iter().map(|(id, _, _)| *id)
+        let roots = g
+            .root_entities()
+            .into_iter()
+            .map(|(id, _, _)| *id)
             .collect::<BTreeSet<_>>();
 
         for (i, vx) in g.reverse_post_order().into_iter().enumerate() {
@@ -84,13 +87,15 @@ impl<'a> StackOffsets<'a> {
                 (b_in, b_out)
             };
 
-            let in_c = if roots.contains(&b.id()) { // in is 0
+            let in_c = if roots.contains(&b.id()) {
+                // in is 0
                 constraint!(b_in == 0)
             } else {
                 constraint!(b_in >= -0xffff)
             };
 
-            let out_c = if b.last().is_return() { // out is extra_pop
+            let out_c = if b.last().is_return() {
+                // out is extra_pop
                 constraint!(b_out == extra_pop)
             } else {
                 constraint!(b_out >= -0xffff)
@@ -114,35 +119,47 @@ impl<'a> StackOffsets<'a> {
                     .entry(PhiOrStmt::from(r))
                     .or_insert(Expression::from(b_in + shift as f64));
 
-                //println!("processing {} // shift: {}", op.value(), shift);
                 match &**op.value() {
                     Stmt::Assign(v, exp) => {
                         if SimpleVar::from(v) == tracked {
-                        // look at used in exp, if only in terms of v, then build shift
-                        match exp {
-                            Expr::Val(ref bv) => { shift = bv.signed_cast(bv.bits()).to_i64()?; },
-                            Expr::BinOp(BinOp::SUB, l, r) if is_tracked(l) => if let Some(v) = constant(&**r) {
-                                shift -= v;
-                            },
-                            Expr::BinOp(op, l, r) => if let Some(v) = {
-                                if is_tracked(l) {
-                                    constant(&**r)
-                                } else if is_tracked(r) {
-                                    constant(&**l)
-                                } else {
-                                    continue
+                            // look at used in exp, if only in terms of v, then build shift
+                            match exp {
+                                Expr::Val(ref bv) => {
+                                    shift = bv.signed_cast(bv.bits()).to_i64()?;
                                 }
-                            } {
-                                match op {
-                                    BinOp::ADD => { shift += v; },
-                                    BinOp::AND => { shift &= v; },
-                                    BinOp::OR => { shift |= v; },
-                                    _ => (),
+                                Expr::BinOp(BinOp::SUB, l, r) if is_tracked(l) => {
+                                    if let Some(v) = constant(&**r) {
+                                        shift -= v;
+                                    }
                                 }
-                            },
-                            _ => (),
+                                Expr::BinOp(op, l, r) => {
+                                    if let Some(v) = {
+                                        if is_tracked(l) {
+                                            constant(&**r)
+                                        } else if is_tracked(r) {
+                                            constant(&**l)
+                                        } else {
+                                            continue;
+                                        }
+                                    } {
+                                        match op {
+                                            BinOp::ADD => {
+                                                shift += v;
+                                            }
+                                            BinOp::AND => {
+                                                shift &= v;
+                                            }
+                                            BinOp::OR => {
+                                                shift |= v;
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                }
+                                _ => (),
+                            }
                         }
-                    }},
+                    }
                     _ => (),
                 }
 
@@ -159,15 +176,25 @@ impl<'a> StackOffsets<'a> {
             }
 
             if is_call {
-                log::trace!("{} - {} >= {}", lp_vars.display(&b_out), lp_vars.display(&b_in), shift);
+                log::trace!(
+                    "{} - {} >= {}",
+                    lp_vars.display(&b_out),
+                    lp_vars.display(&b_in),
+                    shift
+                );
                 constraints.push(constraint!(b_out - b_in >= shift as f64));
             } else {
-                log::trace!("{} - {} == {}", lp_vars.display(&b_out), lp_vars.display(&b_in), shift);
+                log::trace!(
+                    "{} - {} == {}",
+                    lp_vars.display(&b_out),
+                    lp_vars.display(&b_in),
+                    shift
+                );
                 constraints.push(constraint!(b_out - b_in == shift as f64));
             }
 
             // RPO should ensure preds have already been visited
-            for (px, _)  in g.predecessors(vx) {
+            for (px, _) in g.predecessors(vx) {
                 let p_out = if let Some(p_inout) = vars.get(&px) {
                     p_inout.1
                 } else {
@@ -177,15 +204,17 @@ impl<'a> StackOffsets<'a> {
                     p_out
                 };
 
-                log::trace!("{} - {} == 0", lp_vars.display(&b_in), lp_vars.display(&p_out));
+                log::trace!(
+                    "{} - {} == 0",
+                    lp_vars.display(&b_in),
+                    lp_vars.display(&p_out)
+                );
                 constraints.push(constraint!(b_in - p_out == 0));
             }
         }
 
         let problem = vars.values().fold(0.into(), |v, &(pi, po)| pi + po + v);
-        let mut model = lp_vars
-            .minimise(problem)
-            .using(default_solver);
+        let mut model = lp_vars.minimise(problem).using(default_solver);
 
         for c in constraints.into_iter() {
             model = model.with(c);
@@ -196,7 +225,10 @@ impl<'a> StackOffsets<'a> {
         let solution = model.solve().ok()?;
 
         Some(StackOffsets(
-            offsets.into_iter().map(|(k, v)| (k, solution.eval(v) as i64)).collect()
+            offsets
+                .into_iter()
+                .map(|(k, v)| (k, solution.eval(v) as i64))
+                .collect(),
         ))
     }
 
@@ -204,7 +236,7 @@ impl<'a> StackOffsets<'a> {
     where
         T: Clone + 'a,
         E: IntoEntityRef<'a, T = T>,
-        PhiOrStmt<'a>: From<EntityRef<'a, T>>
+        PhiOrStmt<'a>: From<EntityRef<'a, T>>,
     {
         self.0.get(&entity.into_entity_ref().into()).copied()
     }
@@ -212,12 +244,12 @@ impl<'a> StackOffsets<'a> {
 
 #[cfg(test)]
 mod test {
-    use fugue::db::Database;
-    use fugue::ir::LanguageDB;
-    use fugue::ir::il::traits::*;
-    use crate::models::{Project, Lifter};
+    use crate::models::{Lifter, Project};
     use crate::traits::oracle::database_oracles;
     use crate::types::{EntityIdMapping, Locatable};
+    use fugue::db::Database;
+    use fugue::ir::il::traits::*;
+    use fugue::ir::LanguageDB;
 
     use super::*;
 
@@ -240,7 +272,12 @@ mod test {
 
         for seg in db.segments().values() {
             if seg.is_code() && !seg.is_external() {
-                project.add_region_mapping_with(seg.name(), seg.address(), seg.endian(), seg.bytes());
+                project.add_region_mapping_with(
+                    seg.name(),
+                    seg.address(),
+                    seg.endian(),
+                    seg.bytes(),
+                );
             }
         }
 
@@ -260,8 +297,18 @@ mod test {
 
         for (k, v) in offs.unwrap().0.iter() {
             match k {
-                PhiOrStmt::Phi(k) => println!("{} {} // {}", k.location(), (****k).display_with(Some(project.lifter().translator())), v),
-                PhiOrStmt::Stmt(k) => println!("{} {} // {}", k.location(), (****k).display_with(Some(project.lifter().translator())), v),
+                PhiOrStmt::Phi(k) => println!(
+                    "{} {} // {}",
+                    k.location(),
+                    (****k).display_with(Some(project.lifter().translator())),
+                    v
+                ),
+                PhiOrStmt::Stmt(k) => println!(
+                    "{} {} // {}",
+                    k.location(),
+                    (****k).display_with(Some(project.lifter().translator())),
+                    v
+                ),
             }
         }
 

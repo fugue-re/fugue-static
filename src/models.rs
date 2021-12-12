@@ -31,5 +31,8 @@ pub use program::Program;
 pub mod project;
 pub use project::{Project, ProjectBuilder};
 
+pub mod summary;
+pub use summary::Summary;
+
 pub mod usedef;
 pub use usedef::UseDefs;

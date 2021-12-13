@@ -240,6 +240,10 @@ impl<'a> StackOffsets<'a> {
     {
         self.0.get(&entity.into_entity_ref().into()).copied()
     }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item=(&PhiOrStmt<'a>, i64)> {
+        self.0.iter().map(|(k, v)| (k, *v))
+    }
 }
 
 #[cfg(test)]
@@ -250,6 +254,8 @@ mod test {
     use fugue::db::Database;
     use fugue::ir::il::traits::*;
     use fugue::ir::LanguageDB;
+
+    use crate::visualise::AsDot;
 
     use super::*;
 
@@ -295,22 +301,36 @@ mod test {
 
         assert!(offs.is_some());
 
-        for (k, v) in offs.unwrap().0.iter() {
+        for (k, v) in offs.as_ref().unwrap().0.iter() {
             match k {
                 PhiOrStmt::Phi(k) => println!(
-                    "{} {} // {}",
+                    "{} {} # {}",
                     k.location(),
                     (****k).display_with(Some(project.lifter().translator())),
                     v
                 ),
                 PhiOrStmt::Stmt(k) => println!(
-                    "{} {} // {}",
+                    "{} {} # {}",
                     k.location(),
                     (****k).display_with(Some(project.lifter().translator())),
                     v
                 ),
             }
         }
+
+        let offs = offs.unwrap();
+
+        println!(
+            "{}",
+            cfg.dot_with(
+                |_, e| {
+                    let sv = offs.offset_at(e.first()).unwrap();
+                    let ev = offs.offset_at(e.last()).unwrap();
+                    format!("start: {}\n{}\nend: {}", sv, e.display_with(project.lifter().translator().into()), ev)
+                },
+                |_| "".to_string()
+            )
+        );
 
         Ok(())
     }

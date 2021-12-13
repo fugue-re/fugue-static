@@ -6,12 +6,12 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use fugue::bytes::{ByteCast, Endian, BE, LE};
 use fugue::bv::BitVec;
+use fugue::bytes::{ByteCast, Endian, BE, LE};
 use fugue::ir::Address;
 
-use intervals::Interval;
 use intervals::collections::IntervalMap;
+use intervals::Interval;
 
 use crate::types::{Entity, EntityRef, Id, Identifiable};
 
@@ -75,12 +75,15 @@ impl Region {
     ) -> Entity<Self> {
         Self::new_with(Id::new("region"), name, addr, endian, bytes)
     }
+
     pub fn interval(&self) -> &Interval<Address> {
         &self.range
     }
+
     pub fn name(&self) -> &Arc<str> {
         &self.name
     }
+
     pub fn address(&self) -> &Address {
         self.range.start()
     }
@@ -96,6 +99,7 @@ impl Region {
     pub fn bytes_mut(&mut self) -> &mut [u8] {
         &mut self.bytes
     }
+
     pub fn contains_range(&self, address: impl Borrow<Address>, count: usize) -> bool {
         let address = address.borrow();
         count > 0
@@ -168,7 +172,10 @@ impl Region {
         Ok(())
     }
 
-    pub fn read_value<T: ByteCast>(&self, address: impl Borrow<Address>) -> Result<T, RegionIOError> {
+    pub fn read_value<T: ByteCast>(
+        &self,
+        address: impl Borrow<Address>,
+    ) -> Result<T, RegionIOError> {
         let range = self.view_bytes(address, T::SIZEOF)?;
         Ok(if self.endian().is_little() {
             T::from_bytes::<LE>(range)
@@ -192,15 +199,16 @@ impl Region {
             value.into_bytes::<BE>(range)
         })
     }
+
     pub fn view_bytes_from(&self, address: impl Borrow<Address>) -> Result<&[u8], RegionIOError> {
         let address = address.borrow();
         if !self.range.contains_point(address) {
             return Err(RegionIOError::OOBRead(self.name.clone()));
         }
 
-        let offset = u64::from(address).checked_sub(u64::from(*self.address()))
-            .ok_or_else(|| RegionIOError::Range(self.name.clone()))?
-            as usize;
+        let offset = u64::from(address)
+            .checked_sub(u64::from(*self.address()))
+            .ok_or_else(|| RegionIOError::Range(self.name.clone()))? as usize;
 
         Ok(&self.bytes[offset..])
     }
@@ -214,9 +222,9 @@ impl Region {
             return Err(RegionIOError::OOBRead(self.name.clone()));
         }
 
-        let offset = u64::from(address).checked_sub(u64::from(*self.address()))
-            .ok_or_else(|| RegionIOError::Range(self.name.clone()))?
-            as usize;
+        let offset = u64::from(address)
+            .checked_sub(u64::from(*self.address()))
+            .ok_or_else(|| RegionIOError::Range(self.name.clone()))? as usize;
 
         Ok(&mut self.bytes[offset..])
     }
@@ -231,9 +239,9 @@ impl Region {
             return Err(RegionIOError::OOBRead(self.name.clone()));
         }
 
-        let offset = u64::from(address).checked_sub(u64::from(*self.address()))
-            .ok_or_else(|| RegionIOError::Range(self.name.clone()))?
-            as usize;
+        let offset = u64::from(address)
+            .checked_sub(u64::from(*self.address()))
+            .ok_or_else(|| RegionIOError::Range(self.name.clone()))? as usize;
 
         Ok(&self.bytes()[offset..offset + count])
     }
@@ -248,12 +256,13 @@ impl Region {
             return Err(RegionIOError::OOBWrite(self.name.clone()));
         }
 
-        let offset = u64::from(address).checked_sub(u64::from(*self.address()))
-            .ok_or_else(|| RegionIOError::Range(self.name.clone()))?
-            as usize;
+        let offset = u64::from(address)
+            .checked_sub(u64::from(*self.address()))
+            .ok_or_else(|| RegionIOError::Range(self.name.clone()))? as usize;
 
         Ok(&mut self.bytes_mut()[offset..offset + count])
     }
+
     pub fn len(&self) -> usize {
         self.bytes.len()
     }
@@ -280,20 +289,27 @@ impl Memory {
             mapping: IntervalMap::default(),
         }
     }
-    
+
     pub fn name(&self) -> Cow<str> {
         Cow::Borrowed(&*self.name)
     }
-    
+
     pub fn add_region(&mut self, region: Entity<Region>) {
         self.mapping.insert(region.interval().clone(), region);
     }
-    
+
     pub fn find_region(&self, addr: &Address) -> Option<EntityRef<Region>> {
-        self.mapping.find_point(addr).map(|iv| EntityRef::Borrowed(iv.value()))
+        self.mapping
+            .find_point(addr)
+            .map(|iv| EntityRef::Borrowed(iv.value()))
     }
-    
+
+    pub fn find_region_mut<'a>(&'a mut self, addr: &Address) -> Option<&'a mut Entity<Region>> {
+        self.mapping.find_mut(addr).map(|iv| iv.into_value())
+    }
+
     pub fn regions(&self) -> &IntervalMap<Address, Entity<Region>> {
         &self.mapping
     }
 }
+

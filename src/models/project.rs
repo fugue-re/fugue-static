@@ -292,6 +292,14 @@ impl Project {
         &self.lifter
     }
 
+    pub fn memory(&self) -> &Memory {
+        &self.memory
+    }
+
+    pub fn memory_mut(&mut self) -> &mut Memory {
+        &mut self.memory
+    }
+
     pub fn program_counter(&self) -> Var {
         self.lifter.program_counter()
     }

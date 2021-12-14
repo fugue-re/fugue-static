@@ -3,6 +3,7 @@ use fugue::ir::il::ecode::{ExprT, StmtT};
 use crate::traits::{Variables, ValueRefCollector, ValueMutCollector, Visit, VisitMut};
 
 pub trait StmtExt {
+    fn is_skip(&self) -> bool;
     fn is_branch(&self) -> bool;
     fn is_jump(&self) -> bool;
     fn is_cond(&self) -> bool;
@@ -44,6 +45,10 @@ impl<Loc, Val, Var> StmtExt for StmtT<Loc, Val, Var> {
 
     fn is_return(&self) -> bool {
         matches!(self, StmtT::Return(_))
+    }
+
+    fn is_skip(&self) -> bool {
+        matches!(self, StmtT::Skip)
     }
 }
 

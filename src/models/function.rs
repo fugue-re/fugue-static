@@ -123,7 +123,7 @@ where
             match &**blk.value().last().value() {
                 StmtT::CBranch(_, t) => match t {
                     BranchTargetT::Location(ref location) => {
-                        let tgt = &mapping.lookup_by_location::<Option<_>>(&location.location()).expect("block exists");
+                        let tgt = &mapping.lookup_by_location::<Option<_>>(&location.location()).expect(&format!("block exists at {}", location.location()));
                         if self.block_ids.contains_key(&tgt.id()) {
                             let fall = blk.next_block_entities::<_, Option<_>>(mapping).unwrap();
                             cfg.add_cond(blk, tgt, fall);
@@ -142,7 +142,7 @@ where
                 }
                 StmtT::Branch(t) => match t {
                     BranchTargetT::Location(ref location) => {
-                        let tgt = &mapping.lookup_by_location::<Option<_>>(&location.location()).expect("block exists");
+                        let tgt = &mapping.lookup_by_location::<Option<_>>(&location.location()).expect(&format!("block exists at {}", location.location()));
                         if self.block_ids.contains_key(&tgt.id()) {
                             cfg.add_jump(blk, tgt);
                         }
@@ -232,11 +232,18 @@ impl<'trans> FunctionBuilder<'trans> {
     where F: FnMut(&mut ECode) {
         let id = self.block_indices.len();
         let rid = self.blocks.len();
-        let (blocks, targets, _, _) = self.lifter.lift_block(&mut self.context_db, address, bytes, hint, merge, transform);
+        let (blocks, mut targets, _, _) = self.lifter.lift_block(&mut self.context_db, address, bytes, hint, merge, transform);
+
         if blocks.is_empty() {
             None
         } else {
             self.blocks.extend(blocks);
+
+            // remove already explored to produce unexplored targets
+            for block in self.blocks.iter() {
+                targets.remove(&block.location());
+            }
+
             self.block_indices.push(rid);
             Some((id, targets))
         }

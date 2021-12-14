@@ -313,6 +313,7 @@ impl Lifter {
                     match target {
                         ECodeTarget::IntraIns(loc, _) => {
                             local_targets.push(loc.position());
+                            all_targets.insert(loc);
                         }
                         ECodeTarget::InterBlk(BranchTarget::Location(loc))
                         | ECodeTarget::IntraBlk(loc, false) => {
@@ -371,31 +372,33 @@ impl Lifter {
                     local_blocks.push(Entity::from_parts(block.id(), block));
                 }
 
-                let lid = LocatableId::new("blk", Location::new(address.clone(), 0));
-                local_blocks.push(Entity::from_parts(lid.id(), {
-                    let mut block = Block {
-                        id: lid,
-                        operations: if operations.is_empty() {
-                            vec![Entity::new(
-                                "stmt",
-                                Located::new(Location::new(address, 0), Stmt::skip()),
-                            )]
-                        } else {
-                            operations
-                        },
-                        phis: Default::default(),
-                        next_blocks: Vec::default(),
-                    };
-                    if block
-                        .operations()
-                        .last()
-                        .map(|o| o.has_fall())
-                        .unwrap_or(true)
-                    {
-                        block.next_blocks.push(last_location);
-                    }
-                    block
-                }));
+                if local_blocks.is_empty() || !operations.is_empty() {
+                    let lid = LocatableId::new("blk", Location::new(address.clone(), 0));
+                    local_blocks.push(Entity::from_parts(lid.id(), {
+                        let mut block = Block {
+                            id: lid,
+                            operations: if operations.is_empty() {
+                                vec![Entity::new(
+                                    "stmt",
+                                    Located::new(Location::new(address, 0), Stmt::skip()),
+                                )]
+                            } else {
+                                operations
+                            },
+                            phis: Default::default(),
+                            next_blocks: Vec::default(),
+                        };
+                        if block
+                            .operations()
+                            .last()
+                            .map(|o| o.has_fall())
+                            .unwrap_or(true)
+                        {
+                            block.next_blocks.push(last_location);
+                        }
+                        block
+                    }));
+                }
 
                 blks.extend(local_blocks.into_iter().rev());
 
@@ -417,10 +420,15 @@ impl Lifter {
                     && !all_targets.contains(&blks[index].location())
                 {
                     let blk = blks.remove(index).into_value();
-                    blks[index - 1]
-                        .value_mut()
-                        .operations
-                        .extend(blk.operations.into_iter());
+
+                    let ops = &mut blks[index - 1].value_mut().operations;
+
+                    if ops.len() == 1 && ops[0].is_skip() {
+                        *ops = blk.operations;
+                    } else {
+                        ops.extend(blk.operations.into_iter());
+                    }
+
                     blks[index - 1].value_mut().next_blocks = blk.next_blocks;
                 }
             }
@@ -449,7 +457,7 @@ mod test {
 
     #[test]
     fn test_blk_disasm() -> Result<(), Box<dyn std::error::Error>> {
-        env_logger::init();
+        //env_logger::init();
 
         let path = Path::new("./processors");
 
@@ -471,7 +479,7 @@ mod test {
                 0x50, 0xF3, 0xAA, 0x53, 0xFF, 0x13, 0x0F, 0x85, 0xFC, 0x00, 0x00, 0x00,
             ],
         );
-        assert_eq!(blks3.len(), 4);
+        assert_eq!(blks3.len(), 5);
         assert_eq!(len3, 12);
 
         let (blks4, _, _, len4) = lift(0x1010, &[0xE9, 0xFC, 0x00, 0x00, 0x00]);

@@ -22,7 +22,7 @@ use std::iter::FromIterator;
 
 use fugue::bv::BitVec;
 use fugue::ir::{AddressSpace, AddressSpaceId, Translator};
-use fugue::ir::il::ecode::{Cast, ECode, ExprT, StmtT, Var};
+use fugue::ir::il::ecode::{Cast, ECode, ExprT, StmtT, Var, UnOp};
 use fugue::ir::il::traits::*;
 
 use crate::models::{Block, CFG};
@@ -464,6 +464,29 @@ impl<'ecode, Loc, Val> VisitMut<'ecode, Loc, Val, Var> for VariableTempNormVisit
     }
 }
 
+struct PopCountNormVisitor;
+
+impl<'ecode, Loc, Val> VisitMut<'ecode, Loc, Val, Var> for PopCountNormVisitor {
+    fn visit_stmt_mut(&mut self, stmt: &'ecode mut StmtT<Loc, Val, Var>) {
+        let mut def = StmtT::Skip;
+
+        // NOTE: we swap to enable moves out of stmt
+        std::mem::swap(&mut def, stmt);
+
+        if let StmtT::Assign(var, expr) = def {
+            if matches!(expr, ExprT::UnOp(UnOp::POPCOUNT, _)) {
+                let bits = var.bits();
+                *stmt = StmtT::Assign(var, ExprT::Cast(Box::new(expr), Cast::Unsigned(bits)));
+                return
+            } else {
+                def = StmtT::Assign(var, expr);
+            }
+        }
+
+        std::mem::swap(&mut def, stmt);
+    }
+}
+
 impl<'a> VariableNormaliser<'a> {
     pub fn new(translator: &'a Translator) -> Self {
         Self::new_with(translator, translator.manager().unique_space_id())
@@ -492,10 +515,12 @@ impl<'a> VariableNormaliser<'a> {
 
         let mut tn_visitor = VariableTempNormVisitor::new(self.unique_base, self.space);
         let mut an_visitor = VariableAddrNormVisitor::new(self.space, self.translator);
+        let mut pc_visitor = PopCountNormVisitor;
 
         for op in ecode.operations_mut().iter_mut() {
             tn_visitor.visit_stmt_mut(op);
             an_visitor.visit_stmt_mut(op);
+            pc_visitor.visit_stmt_mut(op);
         }
 
         self.unique_base = tn_visitor.unique_base;

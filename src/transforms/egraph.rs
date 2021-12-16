@@ -9,7 +9,7 @@ use fugue::ir::space::AddressSpaceId;
 use fugue::ir::il::ecode::{BinOp, BinRel, BranchTarget, Cast, Expr, Location, Stmt, UnOp, UnRel, Var};
 use fugue::ir::il::traits::*;
 
-use egg::{define_language, EGraph, Id, Symbol};
+use egg::{define_language, EGraph, Id, Symbol, Subst, Applier, PatternAst};
 use egg::{rewrite, Analysis, AstSize, Extractor, RecExpr, Rewrite, Runner};
 
 define_language! {
@@ -83,8 +83,6 @@ define_language! {
         "return" = Return(Id),
 
         "location" = Location([Id; 3]), // address * position * space
-
-        "constant" = Constant([Id; 2]), // value * size
         "variable" = Variable([Id; 4]), // value
 
         BitVec(BitVec),
@@ -134,12 +132,7 @@ impl Analysis<ECodeLanguage> for ConstantFolding {
         let bv = |eid: &Id| egraph[*eid].data.as_ref();
         match enode {
             // const -> bitvec
-            L::Constant([val, bits]) => {
-                let val = egraph[*val].leaves().find_map(|v| v.bitvec().cloned())?;
-                let bits = egraph[*bits].leaves().find_map(|v| v.value())? as usize;
-                Some(val.cast(bits))
-            },
-
+            L::BitVec(bv) => Some(bv.clone()),
             L::Cast([val, cast]) => match egraph[*cast].leaves().next() {
                 None => None,
                 Some(kind) => match kind {
@@ -270,15 +263,10 @@ impl Analysis<ECodeLanguage> for ConstantFolding {
     }
 
     fn modify(egraph: &mut EGraph<ECodeLanguage, Self>, id: Id) {
-        let v = egraph[id].data
-            .as_ref()
-            .map(|bv| (bv.clone(), bv.bits()));
-
-        if let Some((bvv, bits)) = v {
-            let val = egraph.add(ECodeLanguage::BitVec(bvv));
-            let siz = egraph.add(ECodeLanguage::Value(bits as u64));
-            let cst = egraph.add(ECodeLanguage::Constant([val, siz]));
-            egraph.union(id, cst);
+        let v = egraph[id].data.clone();
+        if let Some(bv) = v {
+            let val = egraph.add(ECodeLanguage::BitVec(bv));
+            egraph.union(id, val);
         }
     }
 }
@@ -294,21 +282,57 @@ impl<'ecode> Default for Rewriter<'ecode> {
     fn default() -> Self {
         let rules: Vec<Rewrite<ECodeLanguage, ConstantFolding>> = vec![
             rewrite!("and-self"; "(and ?a ?a)" => "?a"),
-
             rewrite!("or-self"; "(or ?a ?a)" => "?a"),
-            rewrite!("xor-self"; "(xor (variable ?sp ?off ?sz ?gen) (variable ?sp ?off ?sz ?gen))" => "(constant 0:1 ?sz)"),
+            rewrite!("xor-self"; "(xor ?a ?a)" => { CancelIdentity {
+                a: "?a".parse().unwrap(),
+                v: 0,
+            }}),
 
+            rewrite!("double-neg"; "(neg (neg ?a))" => "?a"),
             rewrite!("double-not"; "(not (not ?a))" => "?a"),
 
-            rewrite!("eq-t0"; "(eq ?a ?a)" => "(constant 1:8 8)"),
+            rewrite!("eq-t"; "(eq ?a ?a)" => "1:8"),
+            rewrite!("neq-t"; "(neq ?a ?a)" => "0:8"),
 
-            rewrite!("slt-f0"; "(slt ?a ?a)" => "(constant 0:8 8)"),
+            rewrite!("le-t"; "(le ?a ?a)" => "1:8"),
+            rewrite!("sle-t"; "(sle ?a ?a)" => "1:8"),
 
-            rewrite!("lt-f1"; "(lt ?a ?a)" => "(constant 0:8 8)"),
+            rewrite!("lt-f"; "(lt ?a ?a)" => "0:8"),
+            rewrite!("slt-f"; "(slt ?a ?a)" => "0:8"),
+
+            rewrite!("sub-add"; "(sub ?a ?b)" => "(add ?a (neg ?b))"),
+            rewrite!("add-sub"; "(add ?a (neg ?b))" => "(sub ?a ?b)"),
+
+            rewrite!("add-assoc"; "(add ?a (add ?b ?c))" => "(add (add ?a ?b) ?c)"),
+            rewrite!("mul-assoc"; "(mul ?a (mul ?b ?c))" => "(mul (mul ?a ?b) ?c)"),
+
+            rewrite!("and-assoc"; "(and ?a (and ?b ?c))" => "(and (and ?a ?b) ?c)"),
+            rewrite!("or-assoc"; "(or ?a (or ?b ?c))" => "(or (or ?a ?b) ?c)"),
+            rewrite!("xor-assoc"; "(xor ?a (xor ?b ?c))" => "(xor (xor ?a ?b) ?c)"),
+
+            rewrite!("add-id"; "(add ?a ?b)" => "?a" if is_const("?b", |bv| bv.is_zero())),
+
+            rewrite!("mul-id"; "(mul ?a ?b)" => "?a" if is_const("?b", |bv| bv.is_one())),
+            rewrite!("mul-zero"; "(mul ?a ?b)" => "?b" if is_const("?b", |bv| bv.is_zero())),
 
             rewrite!("add-comm"; "(add ?a ?b)" => "(add ?b ?a)"),
             rewrite!("and-comm"; "(and ?a ?b)" => "(and ?b ?a)"),
             rewrite!("mul-comm"; "(mul ?a ?b)" => "(mul ?b ?a)"),
+            rewrite!("xor-comm"; "(xor ?a ?b)" => "(xor ?b ?a)"),
+
+            rewrite!("cast-unsigned-nop"; "(cast (cast ?a (unsigned ?sz1)) (unsigned ?sz2))" => "(cast ?a (unsigned ?sz2))"
+                     if bits_cmp("?a", "?sz1", |l, r| l <= r)
+                     if bits_cmp("?sz1", "?sz2", |l, r| l <= r)),
+
+            rewrite!("extract-low0"; "(extract-low ?a ?sz)" => "?a" if bits_eq("?a", "?sz")),
+            rewrite!("extract-high0"; "(extract-high ?a ?sz)" => "?a" if bits_eq("?a", "?sz")),
+
+            rewrite!("cast-extract-nop"; "(extract-low (cast ?a (unsigned ?sz1)) ?sz2)" => "(cast ?a (unsigned ?sz2))"
+                     if bits_cmp("?a", "?sz2", |l, r| l <= r)
+                     if bits_cmp("?sz1", "?sz2", |l, r| l >= r)),
+
+            rewrite!("extract-low1"; "(extract-low (concat ?a ?b) ?sz)" => "?b" if bits_eq("?b", "?sz")),
+            rewrite!("extract-high1"; "(extract-high (concat ?a ?b) ?sz)" => "?a" if bits_eq("?a", "?sz")),
         ];
 
         Self {
@@ -317,6 +341,119 @@ impl<'ecode> Default for Rewriter<'ecode> {
             rules,
             last_id: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CancelIdentity {
+    a: egg::Var,
+    v: u64,
+}
+
+impl Applier<ECodeLanguage, ConstantFolding> for CancelIdentity {
+
+    fn apply_one(&self, egraph: &mut EGraph<ECodeLanguage, ConstantFolding>, matched_id: Id, subst: &Subst, _: Option<&PatternAst<ECodeLanguage>>, _: Symbol) -> Vec<Id> {
+        use ECodeLanguage as L;
+
+        let a = subst[self.a];
+        if let Some(bits) = lexpr_bits(egraph, a) {
+            let val = egraph.add(L::BitVec(BitVec::from_u64(self.v, bits as usize)));
+            if egraph.union(matched_id, val) {
+                vec![val]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    }
+}
+
+fn lexpr_bits(nodes: &EGraph<ECodeLanguage, ConstantFolding>, id: Id) -> Option<u64> {
+    use ECodeLanguage as L;
+
+    let node = &nodes[id].nodes[0];
+    let value = |v| nodes[v].nodes[0].value();
+
+    match node {
+        L::Value(sz) => Some(*sz),
+        L::BitVec(bv) => Some(bv.bits() as u64),
+        //L::Constant([_, sz]) |
+        L::Variable([_, _, sz, _]) |
+        L::Load([_, sz, _]) |
+        L::ExtractHigh([_, sz]) |
+        L::ExtractLow([_, sz]) => value(*sz),
+        L::Extract([_, ms, ls]) => value(*ms).and_then(|mv| value(*ls).map(|lv| mv - lv)),
+        L::Cast([_, c]) => match &nodes[*c].nodes[0] {
+            L::CastNamed([_, sz]) |
+            L::CastSigned(sz) |
+            L::CastUnsigned(sz) |
+            L::CastPtr([_, sz]) |
+            L::CastFloat(sz) => value(*sz),
+            L::CastBool => Some(8),
+            _ => None,
+        },
+        L::And([v, _]) |
+        L::Or([v, _]) |
+        L::Xor([v, _]) |
+        L::Add([v, _]) |
+        L::Sub([v, _]) |
+        L::Div([v, _]) |
+        L::SDiv([v, _]) |
+        L::Mul([v, _]) |
+        L::Rem([v, _]) |
+        L::SRem([v, _]) |
+        L::Shl([v, _]) |
+        L::Sar([v, _]) |
+        L::Shr([v, _]) |
+        L::IfElse([_, v, _]) => lexpr_bits(nodes, *v),
+        L::Not(v) |
+        L::Neg(v) |
+        L::Abs(v) |
+        L::Sqrt(v) |
+        L::Ceiling(v) |
+        L::Floor(v) |
+        L::Round(v) => lexpr_bits(nodes, *v),
+        L::Eq(_) |
+        L::NotEq(_) |
+        L::Less(_) |
+        L::LessEq(_) |
+        L::SLess(_) |
+        L::SLessEq(_) |
+        L::SBorrow(_) |
+        L::Carry(_) |
+        L::SCarry(_) => Some(8),
+        L::Concat([l, r]) => lexpr_bits(nodes, *l).and_then(|ls| lexpr_bits(nodes, *r).map(|rs| ls + rs)),
+        _ => None,
+    }
+}
+
+fn is_const<F>(var1: &'static str, f: F) -> impl Fn(&mut EGraph<ECodeLanguage, ConstantFolding>, Id, &Subst) -> bool
+where F: Fn(&BitVec) -> bool {
+    let var1 = var1.parse().unwrap();
+
+    move |egraph, _, subst| {
+        egraph[subst[var1]].nodes.iter().any(|v| if let ECodeLanguage::BitVec(ref bv) = v {
+            f(bv)
+        } else {
+            false
+        })
+    }
+}
+
+fn bits_eq(var1: &'static str, var2: &'static str) -> impl Fn(&mut EGraph<ECodeLanguage, ConstantFolding>, Id, &Subst) -> bool {
+    bits_cmp(var1, var2, |l, r| l == r)
+}
+
+fn bits_cmp<F>(var1: &'static str, var2: &'static str, cmp: F) -> impl Fn(&mut EGraph<ECodeLanguage, ConstantFolding>, Id, &Subst) -> bool
+where F: Fn(u64, u64) -> bool {
+    let var1 = var1.parse().unwrap();
+    let var2 = var2.parse().unwrap();
+
+    move |egraph, _, subst| {
+        let lsz = lexpr_bits(egraph, subst[var1]);
+        let rsz = lexpr_bits(egraph, subst[var2]);
+        matches!((lsz, rsz), (Some(ls), Some(rs)) if cmp(ls, rs))
     }
 }
 
@@ -366,10 +503,10 @@ impl<'ecode> Visit<'ecode, Location, BitVec, Var> for Rewriter<'ecode> {
     fn visit_expr_val(&mut self, bv: &'ecode BitVec) {
         use ECodeLanguage as L;
 
-        let val = self.graph.add(L::BitVec(bv.clone())); // TODO: this could be a Cow<'_, BitVec>
-        let siz = self.graph.add(L::Value(bv.bits() as u64));
+        /*let val =*/ self.add(L::BitVec(bv.clone())); // TODO: this could be a Cow<'_, BitVec>
+        //let siz = self.graph.add(L::Value(bv.bits() as u64));
 
-        self.add(L::Constant([val, siz]))
+        //self.add(L::Constant([val, siz]))
     }
 
     fn visit_cast(&mut self, cast: &'ecode Cast) {
@@ -788,16 +925,6 @@ impl<'ecode> Rewriter<'ecode> {
         }
     }
 
-    fn into_bitvec(nodes: &RecExpr<ECodeLanguage>, i: usize) -> BitVec {
-        use ECodeLanguage as L;
-
-        if let L::BitVec(ref v) = &nodes.as_ref()[i] {
-            v.clone()
-        } else {
-            panic!("language term at index {} is not a bitvec", i);
-        }
-    }
-
     fn into_location(translator: &'ecode Translator, nodes: &RecExpr<ECodeLanguage>, i: usize) -> Location {
         use ECodeLanguage as L;
 
@@ -1064,7 +1191,7 @@ impl<'ecode> Rewriter<'ecode> {
                 Self::into_expr_aux(translator, nodes, (*expr).into()),
                 Self::into_value(nodes, (*bits).into()) as usize,
             ),
-            L::ExtractLow([expr, bits]) => Expr::extract_high(
+            L::ExtractLow([expr, bits]) => Expr::extract_low(
                 Self::into_expr_aux(translator, nodes, (*expr).into()),
                 Self::into_value(nodes, (*bits).into()) as usize,
             ),
@@ -1095,11 +1222,14 @@ impl<'ecode> Rewriter<'ecode> {
             },
 
             // primitives
+            L::BitVec(bv) => bv.clone().into(),
+            /*
             L::Constant([val, sz]) => {
                 let val = Self::into_bitvec(nodes, (*val).into());
                 let sz = Self::into_value(nodes, (*sz).into()) as usize;
                 val.cast(sz).into()
             },
+            */
             L::Variable(_) => Self::into_variable(translator, nodes, i).into(),
 
             _ => panic!("language term {} at index {} is not an expression", node, i)
@@ -1187,7 +1317,9 @@ impl<'ecode> Rewriter<'ecode> {
         let ex = Extractor::new(&self.graph, AstSize);
         let (_, rec) = ex.find_best(exid.clone());
 
-        Self::into_expr_aux(translator, &rec, rec.as_ref().len() - 1)
+        let nexpr = Self::into_expr_aux(translator, &rec, rec.as_ref().len() - 1);
+
+        nexpr
     }
 
     pub fn operations(&self) -> impl Iterator<Item=(Option<&'ecode Var>, &RecExpr<ECodeLanguage>)> {
@@ -1219,5 +1351,55 @@ impl<'ecode> Rewriter<'ecode> {
 
         let runner = runner.run(self.rules.iter());
         self.graph = runner.egraph;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::analyses::expressions::symbolic::SymProp;
+    use crate::models::{Lifter, Project};
+    use crate::traits::oracle::database_oracles;
+    use crate::types::EntityIdMapping;
+    use fugue::db::Database;
+    use fugue::ir::LanguageDB;
+
+    #[test]
+    fn test_failure() -> Result<(), Box<dyn std::error::Error>> {
+
+        let ldb = LanguageDB::from_directory_with("./processors", true)?;
+        let db = Database::from_file("./tests/lojax.fdb", &ldb)?;
+
+        let translator = db.default_translator();
+        let convention = translator.compiler_conventions()["windows"].clone();
+        let lifter = Lifter::new(translator, convention);
+
+        let mut project = Project::new("lojax", lifter);
+        let (bo, fo) = database_oracles(&db);
+
+        project.set_block_oracle(bo);
+        project.set_function_oracle(fo);
+
+        for seg in db.segments().values() {
+            if seg.is_code() && !seg.is_external() {
+                project.add_region_mapping_with(
+                    seg.name(),
+                    seg.address(),
+                    seg.endian(),
+                    seg.bytes(),
+                );
+            }
+        }
+
+        let sample2 = db.function("_ModuleEntryPoint").unwrap();
+        let fid = project.add_function(sample2.address()).unwrap();
+
+        let sample2f = project.lookup_by_id(fid).unwrap();
+
+        let mut cfg = sample2f.cfg_with(&*project, &*project);
+        let mut prop = SymProp::new(project.lifter().translator());
+
+        prop.propagate_expressions(&mut cfg);
+
+        Ok(())
     }
 }

@@ -1356,8 +1356,9 @@ impl<'ecode> Rewriter<'ecode> {
 
 #[cfg(test)]
 mod test {
-    use crate::analyses::expressions::symbolic::SymProp;
+    use crate::analyses::expressions::symbolic::{SymExprs, SymPropFold};
     use crate::models::{Lifter, Project};
+    use crate::traits::Substitutor;
     use crate::traits::oracle::database_oracles;
     use crate::types::EntityIdMapping;
     use fugue::db::Database;
@@ -1396,9 +1397,12 @@ mod test {
         let sample2f = project.lookup_by_id(fid).unwrap();
 
         let mut cfg = sample2f.cfg_with(&*project, &*project);
-        let mut prop = SymProp::new(project.lifter().translator());
+        let mut prop = SymExprs::new(project.lifter().translator());
 
-        prop.propagate_expressions(&mut cfg);
+        cfg.propagate_expressions(&mut prop);
+
+        let mut subst = Substitutor::new(prop.propagator());
+        subst.apply_graph(&mut cfg);
 
         Ok(())
     }

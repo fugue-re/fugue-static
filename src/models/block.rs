@@ -306,6 +306,16 @@ impl Block {
 
         Ok(blocks)
     }
+
+    pub fn empty(location: Location) -> Entity<Self> {
+        let lid = LocatableId::new("blk", location);
+        Entity::from_parts(lid.id(), Block {
+            id: lid,
+            operations: Vec::default(),
+            phis: Default::default(),
+            next_blocks: Vec::default(),
+        })
+    }
 }
 
 impl<Loc, Val, Var> BlockT<Loc, Val, Var>
@@ -383,7 +393,7 @@ where
         &self.operations
     }
 
-    pub fn operations_mut(&mut self) -> &mut [Entity<Located<StmtT<Loc, Val, Var>>>] {
+    pub fn operations_mut(&mut self) -> &mut Vec<Entity<Located<StmtT<Loc, Val, Var>>>> {
         &mut self.operations
     }
 

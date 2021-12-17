@@ -1,16 +1,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use fugue::bv::BitVec;
 use fugue::ir::convention::Convention;
 use fugue::ir::il::ecode::{BinOp, Expr, Stmt, Var};
+use fugue::ir::il::traits::*;
 use good_lp::*;
 
 use crate::graphs::entity::VertexIndex;
-use crate::graphs::AsEntityGraph;
+use crate::graphs::{AsEntityGraph, AsEntityGraphMut};
 use crate::models::cfg::BranchKind;
-use crate::models::{Block, Phi};
+use crate::models::Block;
 use crate::traits::stmt::*;
-use crate::types::{EntityRef, Identifiable, IntoEntityRef, Located, SimpleVar};
+use crate::types::{
+    Entity, Id, Identifiable, Locatable, Located, SimpleVar,
+};
 
+/*
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PhiOrStmt<'a> {
     Phi(EntityRef<'a, Located<Phi>>),
@@ -38,9 +43,13 @@ impl<'a> From<EntityRef<'a, Located<Stmt>>> for PhiOrStmt<'a> {
         Self::Stmt(stmt)
     }
 }
+*/
 
 #[derive(Debug, Clone)]
-pub struct StackOffsets<'a>(BTreeMap<PhiOrStmt<'a>, i64>);
+pub struct StackOffsets {
+    tracked: Var,
+    adjustments: BTreeMap<Id<Block>, i64>,
+}
 
 fn constant(expr: &Expr) -> Option<i64> {
     if let Expr::Val(v) = expr {
@@ -50,8 +59,8 @@ fn constant(expr: &Expr) -> Option<i64> {
     }
 }
 
-impl<'a> StackOffsets<'a> {
-    pub fn analyse_with<G>(g: &'a G, tracked: &Var, convention: &Convention) -> Option<Self>
+impl StackOffsets {
+    fn analyse_aux<'a, G>(g: &G, tracked: &Var, convention: &Convention) -> Option<Self>
     where
         G: AsEntityGraph<'a, Block, BranchKind>,
     {
@@ -75,14 +84,14 @@ impl<'a> StackOffsets<'a> {
             .map(|(id, _, _)| *id)
             .collect::<BTreeSet<_>>();
 
-        for (i, vx) in g.reverse_post_order().into_iter().enumerate() {
+        for vx in g.reverse_post_order().into_iter() {
             let b = g.entity(vx);
 
             let (b_in, b_out) = if let Some(b_inout) = vars.get(&vx) {
                 *b_inout
             } else {
-                let b_in = lp_vars.add(variable().integer().name(format!("in{}", i)));
-                let b_out = lp_vars.add(variable().integer().name(format!("out{}", i)));
+                let b_in = lp_vars.add(variable().integer());
+                let b_out = lp_vars.add(variable().integer());
                 vars.insert(vx, (b_in, b_out));
                 (b_in, b_out)
             };
@@ -105,20 +114,9 @@ impl<'a> StackOffsets<'a> {
             constraints.push(out_c);
 
             let mut shift = 0i64;
-
-            for phi in b.phis() {
-                let r = phi.into_entity_ref();
-                offsets.insert(PhiOrStmt::from(r), Expression::from(b_in + shift as f64));
-            }
-
             let mut is_call = false;
 
             for op in b.operations() {
-                let r = op.into_entity_ref();
-                let e = offsets
-                    .entry(PhiOrStmt::from(r))
-                    .or_insert(Expression::from(b_in + shift as f64));
-
                 match &**op.value() {
                     Stmt::Assign(v, exp) => {
                         if SimpleVar::from(v) == tracked {
@@ -163,16 +161,14 @@ impl<'a> StackOffsets<'a> {
                     _ => (),
                 }
 
-                *e = if op.is_call() {
-                    is_call = true;
-                    shift += extra_pop as i64;
+                if op.is_call() {
                     // we know that this will be the last op of the block
                     // hence we can say that the call is assigned the adjusted
                     // value
-                    Expression::from(b_out)
-                } else {
-                    Expression::from(b_in + shift as f64)
-                };
+                    is_call = true;
+                    offsets.insert(b.id(), Expression::from(b_out - (b_in + shift as f64)));
+                    shift += extra_pop as i64;
+                }
             }
 
             if is_call {
@@ -203,12 +199,6 @@ impl<'a> StackOffsets<'a> {
                     vars.insert(px, (p_in, p_out));
                     p_out
                 };
-
-                log::trace!(
-                    "{} - {} == 0",
-                    lp_vars.display(&b_in),
-                    lp_vars.display(&p_out)
-                );
                 constraints.push(constraint!(b_in - p_out == 0));
             }
         }
@@ -224,44 +214,93 @@ impl<'a> StackOffsets<'a> {
 
         let solution = model.solve().ok()?;
 
-        Some(StackOffsets(
-            offsets
+        Some(StackOffsets {
+            tracked: **tracked,
+            adjustments: offsets
                 .into_iter()
                 .map(|(k, v)| (k, solution.eval(v) as i64))
                 .collect(),
-        ))
+        })
     }
 
-    pub fn offset_at<T, E>(&self, entity: E) -> Option<i64>
+    pub fn analyse<'a, G>(g: &G, tracked: &Var, convention: &Convention) -> Self
     where
-        T: Clone + 'a,
-        E: IntoEntityRef<'a, T = T>,
-        PhiOrStmt<'a>: From<EntityRef<'a, T>>,
+        G: AsEntityGraph<'a, Block, BranchKind>,
     {
-        self.0.get(&entity.into_entity_ref().into()).copied()
+        Self::analyse_aux(g, tracked, convention).unwrap_or_else(|| Self {
+            tracked: *tracked,
+            adjustments: Default::default(),
+        })
     }
 
-    pub fn iter(&self) -> impl ExactSizeIterator<Item=(&PhiOrStmt<'a>, i64)> {
-        self.0.iter().map(|(k, v)| (k, *v))
+    pub fn apply<'a, G>(&self, g: &mut G)
+    where
+        G: AsEntityGraphMut<'a, Block, BranchKind>,
+    {
+        let g = g.entity_graph_mut();
+        for (bid, adjustment) in self.adjustments.iter() {
+            let bx = g.entity_vertex(*bid).unwrap();
+            let blk = g.entity_mut(bx).to_mut();
+            let loc = blk.last().location();
+            let mut nblk = Block::empty(loc.clone());
+            nblk.operations_mut().push(Entity::new(
+                "stmt",
+                Located::new(
+                    loc,
+                    Stmt::Assign(
+                        self.tracked,
+                        Expr::int_add(
+                            self.tracked,
+                            BitVec::from_i64(*adjustment, self.tracked.bits()),
+                        ),
+                    ),
+                ),
+            ));
+
+            let mut loc_tgts = vec![nblk.id().into()];
+            std::mem::swap(blk.next_blocks_mut(), &mut loc_tgts);
+            *nblk.next_blocks_mut() = loc_tgts;
+
+            let sx = g.add_entity(nblk);
+            let succs = g.successors(bx).into_iter().collect::<Vec<_>>();
+            g.add_vertex_relation(bx, sx, BranchKind::Fall);
+
+            for (succ, ex) in succs {
+                let ev = g.remove_edge(ex);
+                g.add_vertex_relation(sx, succ, ev.unwrap());
+            }
+        }
+    }
+
+    pub fn offset_for(&self, blk: Id<Block>) -> i64 {
+        self.adjustments.get(&blk).copied().unwrap_or(0)
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&Id<Block>, i64)> {
+        self.adjustments.iter().map(|(k, v)| (k, *v))
     }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::analyses::expressions::symbolic::{SymPropFold, SymExprs, SymExprsProp};
     use crate::models::{Lifter, Project};
+    use crate::traits::{VisitMut, Substitutor};
     use crate::traits::oracle::database_oracles;
-    use crate::types::{EntityIdMapping, Locatable};
+    use crate::types::EntityIdMapping;
     use fugue::db::Database;
     use fugue::ir::il::traits::*;
-    use fugue::ir::LanguageDB;
+    use fugue::ir::il::Location;
+    use fugue::ir::{LanguageDB, AddressSpaceId};
 
+    use crate::transforms::SSA;
     use crate::visualise::AsDot;
 
     use super::*;
 
     #[test]
     fn test_sample2() -> Result<(), Box<dyn std::error::Error>> {
-        env_logger::init();
+        env_logger::try_init().ok();
 
         let ldb = LanguageDB::from_directory_with("./processors", true)?;
         let db = Database::from_file("./tests/sample2.fdb", &ldb)?;
@@ -291,42 +330,203 @@ mod test {
         let fid = project.add_function(sample2.address()).unwrap();
 
         let sample2f = project.lookup_by_id(fid).unwrap();
-        let cfg = sample2f.cfg_with(&*project, &*project);
+        let mut cfg = sample2f.cfg_with(&*project, &*project);
 
-        let offs = StackOffsets::analyse_with(
+        let offs = StackOffsets::analyse(
             &cfg,
             &project.lifter().stack_pointer(),
             &project.lifter().convention(),
         );
 
-        assert!(offs.is_some());
+        let mut prop = SymExprs::new(project.lifter().translator());
 
-        for (k, v) in offs.as_ref().unwrap().0.iter() {
-            match k {
-                PhiOrStmt::Phi(k) => println!(
-                    "{} {} # {}",
-                    k.location(),
-                    (****k).display_with(Some(project.lifter().translator())),
-                    v
-                ),
-                PhiOrStmt::Stmt(k) => println!(
-                    "{} {} # {}",
-                    k.location(),
-                    (****k).display_with(Some(project.lifter().translator())),
-                    v
-                ),
+        offs.apply(&mut cfg);
+        cfg.ssa();
+        cfg.propagate_expressions(&mut prop);
+
+        // only perform subst if forall v in fv(subst). v in reaching-defs(subst)
+
+        let subst = Substitutor::new(prop.propagator());
+        //let mut fsubst = SubstLoadStore::new(&mut subst);
+        //fsubst.apply_graph(&mut cfg);
+
+        struct RenameStack<'a> {
+            tracked: SimpleVar<'static>,
+            stack_space: AddressSpaceId,
+            subst: Substitutor<Location, BitVec, Var, SymExprsProp<'a>>,
+        }
+
+        impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for RenameStack<'a> {
+            fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
+                match expr {
+                    Expr::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
+                    Expr::UnOp(op, ref mut expr) => self.visit_expr_unop_mut(*op, expr),
+                    Expr::BinRel(op, ref mut lexpr, ref mut rexpr) => {
+                        self.visit_expr_binrel_mut(*op, lexpr, rexpr)
+                    }
+                    Expr::BinOp(op, ref mut lexpr, ref mut rexpr) => {
+                        self.visit_expr_binop_mut(*op, lexpr, rexpr)
+                    }
+                    Expr::Cast(ref mut expr, ref mut cast) => self.visit_expr_cast_mut(expr, cast),
+                    Expr::Load(ref mut lexpr, size, _) => {
+                        let mut nlexpr = lexpr.clone();
+                        self.subst.apply_expr(&mut nlexpr);
+
+                        match &mut *nlexpr {
+                            Expr::BinOp(op, ref mut lexpr, ref mut rexpr) => if *op == BinOp::ADD {
+                                match (&mut **lexpr, &mut **rexpr) {
+                                    (Expr::Var(ref sp), Expr::Val(ref sft)) |
+                                        (Expr::Val(ref sft), Expr::Var(ref sp)) if SimpleVar::from(sp) == self.tracked => {
+                                            let val = sft.to_i64().unwrap();
+                                            let var = Var::new(self.stack_space, val as u64, *size, 0);
+                                            *expr = Expr::from(var);
+                                        },
+                                        _ => self.visit_expr_mut(lexpr),
+                                }
+                            } else {
+                                self.visit_expr_mut(lexpr)
+                            },
+                            _ => self.visit_expr_mut(lexpr),
+                        }
+                    },
+                    Expr::ExtractHigh(ref mut expr, bits) => self.visit_expr_extract_high_mut(expr, *bits),
+                    Expr::ExtractLow(ref mut expr, bits) => self.visit_expr_extract_low_mut(expr, *bits),
+                    Expr::Extract(ref mut expr, lsb, msb) => self.visit_expr_extract_mut(expr, *lsb, *msb),
+                    Expr::Concat(ref mut lexpr, ref mut rexpr) => self.visit_expr_concat_mut(lexpr, rexpr),
+                    Expr::IfElse(ref mut cond, ref mut texpr, ref mut fexpr) => self.visit_expr_ite_mut(cond, texpr, fexpr),
+                    Expr::Call(ref mut branch_target, ref mut args, bits) => {
+                        self.visit_expr_call_mut(branch_target, args, *bits)
+                    }
+                    Expr::Intrinsic(ref name, ref mut args, bits) => {
+                        self.visit_expr_intrinsic_mut(name, args, *bits)
+                    }
+                    Expr::Val(_) => (),
+                    Expr::Var(_) => (),
+                }
+            }
+
+            fn visit_stmt_mut(&mut self, stmt: &'ecode mut Stmt) {
+                match stmt {
+                    Stmt::Assign(_, ref mut expr) => {
+                        self.visit_expr_mut(expr)
+                    },
+                    Stmt::Call(ref mut bt, ref mut args) => self.visit_stmt_call_mut(bt, args),
+                    Stmt::Branch(ref mut bt) => self.visit_stmt_branch_mut(bt),
+                    Stmt::CBranch(ref mut c, ref mut bt) => self.visit_stmt_cbranch_mut(c, bt),
+                    Stmt::Intrinsic(name, ref mut args) => self.visit_stmt_intrinsic_mut(&*name, args),
+                    Stmt::Return(ref mut bt) => self.visit_stmt_return_mut(bt),
+                    Stmt::Skip => (),
+                    Stmt::Store(ref mut lexpr, ref mut roexpr, size, _) => {
+                        self.visit_expr_mut(roexpr);
+
+                        let mut nlexpr = lexpr.clone();
+                        self.subst.apply_expr(&mut nlexpr);
+
+                        match &mut nlexpr {
+                            Expr::BinOp(op, ref mut lexpr, ref mut rexpr) => if *op == BinOp::ADD {
+                                match (&mut **lexpr, &mut **rexpr) {
+                                    (Expr::Var(ref sp), Expr::Val(ref sft)) |
+                                    (Expr::Val(ref sft), Expr::Var(ref sp)) if SimpleVar::from(sp) == self.tracked => {
+                                        let val = sft.to_i64().unwrap();
+                                        let var = Var::new(self.stack_space, val as u64, *size, 0);
+                                        *stmt = Stmt::Assign(var, roexpr.clone());
+                                    },
+                                    _ => self.visit_expr_mut(lexpr),
+                                }
+                            } else {
+                                self.visit_expr_mut(lexpr)
+                            },
+                            _ => self.visit_expr_mut(lexpr)
+                        }
+                    }
+                }
             }
         }
 
-        let offs = offs.unwrap();
+        let mut rs = RenameStack {
+            tracked: project.stack_pointer().into(),
+            stack_space: project.lifter().stack_space_id(),
+            subst,
+        };
+
+        for bx in cfg.reverse_post_order().into_iter() {
+            let blk = cfg.entity_mut(bx).to_mut();
+            for op in blk.operations_mut() {
+                rs.visit_stmt_mut(op);
+            }
+        }
+
+        cfg.ssa();
 
         println!(
             "{}",
             cfg.dot_with(
                 |_, e| {
-                    let sv = offs.offset_at(e.first()).unwrap();
-                    let ev = offs.offset_at(e.last()).unwrap();
-                    format!("start: {}\n{}\nend: {}", sv, e.display_with(project.lifter().translator().into()), ev)
+                    format!(
+                        "{}",
+                        e.display_with(project.lifter().translator().into()),
+                    )
+                },
+                |_| "".to_string()
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_lojax() -> Result<(), Box<dyn std::error::Error>> {
+        env_logger::try_init().ok();
+
+        let ldb = LanguageDB::from_directory_with("./processors", true)?;
+        let db = Database::from_file("./tests/lojax.fdb", &ldb)?;
+
+        let translator = db.default_translator();
+        let convention = translator.compiler_conventions()["windows"].clone();
+        let lifter = Lifter::new(translator, convention);
+
+        let mut project = Project::new("sample2", lifter);
+        let (bo, fo) = database_oracles(&db);
+
+        project.set_block_oracle(bo);
+        project.set_function_oracle(fo);
+
+        for seg in db.segments().values() {
+            project.add_region_mapping_with(seg.name(), seg.address(), seg.endian(), seg.bytes());
+        }
+
+        let sample2 = db.function("sub_2A0").unwrap();
+        let fid = project.add_function(sample2.address()).unwrap();
+
+        let sample2f = project.lookup_by_id(fid).unwrap();
+        let mut cfg = sample2f.cfg_with(&*project, &*project);
+
+        let offs = StackOffsets::analyse(
+            &cfg,
+            &project.lifter().stack_pointer(),
+            &project.lifter().convention(),
+        );
+
+        let mut prop = SymExprs::new(project.lifter().translator());
+
+        offs.apply(&mut cfg);
+
+        cfg.ssa();
+        cfg.propagate_expressions(&mut prop);
+
+        let mut subst = Substitutor::new(prop.propagator());
+        subst.apply_graph(&mut cfg);
+
+        cfg.ssa();
+
+        println!(
+            "{}",
+            cfg.dot_with(
+                |_, e| {
+                    format!(
+                        "{}",
+                        e.display_with(project.lifter().translator().into()),
+                    )
                 },
                 |_| "".to_string()
             )

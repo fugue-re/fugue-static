@@ -1,6 +1,8 @@
-use std::marker::PhantomData;
 use fugue::ir::il::ecode::{ExprT, StmtT, Var};
+use std::marker::PhantomData;
 
+use crate::graphs::AsEntityGraphMut;
+use crate::models::BlockT;
 use crate::traits::VisitMut;
 use crate::traits::{ValueMutCollector, ValueRefCollector};
 use crate::types::SimpleVar;
@@ -163,7 +165,91 @@ where
     }
 }
 
-pub struct Substitutor<Loc, Val, Var, T: Substitution<Loc, Val, Var>>(T, PhantomData<(Loc, Val, Var)>);
+pub struct Substitutor<Loc, Val, Var, T: Substitution<Loc, Val, Var>>(
+    T,
+    PhantomData<(Loc, Val, Var)>,
+);
+
+pub struct SubstLoadStore<'a, Loc, Val, Var, T: Substitution<Loc, Val, Var>>(
+    &'a mut Substitutor<Loc, Val, Var, T>,
+);
+
+impl<'a, Loc, Val, Var, T> SubstLoadStore<'a, Loc, Val, Var, T>
+where
+    T: Substitution<Loc, Val, Var>,
+{
+    pub fn new(subst: &'a mut Substitutor<Loc, Val, Var, T>) -> Self {
+        Self(subst)
+    }
+
+    pub fn apply_stmt<'ecode>(&mut self, stmt: &'ecode mut StmtT<Loc, Val, Var>) {
+        self.visit_stmt_mut(stmt);
+    }
+
+    pub fn apply_expr<'ecode>(&mut self, expr: &'ecode mut ExprT<Loc, Val, Var>) {
+        self.visit_expr_mut(expr)
+    }
+}
+
+impl<'a, Loc, Val, Var, T> SubstLoadStore<'a, Loc, Val, Var, T>
+where
+    T: Substitution<Loc, Val, Var>,
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone,
+{
+    pub fn apply_block<'ecode>(&mut self, block: &'ecode mut BlockT<Loc, Val, Var>) {
+        for phi in block.phis_mut() {
+            phi.assign_mut()
+                .iter_mut()
+                .for_each(|var| self.visit_var_mut(var));
+        }
+
+        for op in block.operations_mut() {
+            self.apply_stmt(op);
+        }
+    }
+
+    pub fn apply_graph<'ecode, G, E>(&mut self, graph: &mut G)
+    where
+        G: AsEntityGraphMut<'ecode, BlockT<Loc, Val, Var>, E>,
+        Loc: 'ecode,
+        Val: 'ecode,
+        Var: 'ecode,
+    {
+        let g = graph.entity_graph_mut();
+        for vx in g.reverse_post_order() {
+            let blk = g.entity_mut(vx);
+            self.apply_block(&mut **blk.to_mut());
+        }
+    }
+}
+
+impl<'a, 'ecode, Loc, Val, Var, T> VisitMut<'ecode, Loc, Val, Var>
+    for SubstLoadStore<'a, Loc, Val, Var, T>
+where
+    T: Substitution<Loc, Val, Var>,
+{
+    fn visit_expr_load_mut(
+        &mut self,
+        expr: &'ecode mut ExprT<Loc, Val, Var>,
+        _size: usize,
+        _space: fugue::ir::AddressSpaceId,
+    ) {
+        self.0.visit_expr_mut(expr);
+    }
+
+    fn visit_stmt_store_mut(
+        &mut self,
+        loc: &'ecode mut ExprT<Loc, Val, Var>,
+        val: &'ecode mut ExprT<Loc, Val, Var>,
+        _size: usize,
+        _space: fugue::ir::AddressSpaceId,
+    ) {
+        self.visit_expr_mut(val);
+        self.0.visit_expr_mut(loc);
+    }
+}
 
 impl<Loc, Val, Var, T> Substitutor<Loc, Val, Var, T>
 where
@@ -179,6 +265,40 @@ where
 
     pub fn apply_expr<'ecode>(&mut self, expr: &'ecode mut ExprT<Loc, Val, Var>) {
         self.visit_expr_mut(expr)
+    }
+}
+
+impl<Loc, Val, Var, T> Substitutor<Loc, Val, Var, T>
+where
+    T: Substitution<Loc, Val, Var>,
+    Loc: Clone,
+    Val: Clone,
+    Var: Clone,
+{
+    pub fn apply_block<'ecode>(&mut self, block: &'ecode mut BlockT<Loc, Val, Var>) {
+        for phi in block.phis_mut() {
+            phi.assign_mut()
+                .iter_mut()
+                .for_each(|var| self.visit_var_mut(var));
+        }
+
+        for op in block.operations_mut() {
+            self.apply_stmt(op);
+        }
+    }
+
+    pub fn apply_graph<'ecode, G, E>(&mut self, graph: &mut G)
+    where
+        G: AsEntityGraphMut<'ecode, BlockT<Loc, Val, Var>, E>,
+        Loc: 'ecode,
+        Val: 'ecode,
+        Var: 'ecode,
+    {
+        let g = graph.entity_graph_mut();
+        for vx in g.reverse_post_order() {
+            let blk = g.entity_mut(vx);
+            self.apply_block(&mut **blk.to_mut());
+        }
     }
 }
 

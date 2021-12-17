@@ -6,8 +6,9 @@ use crate::graphs::entity::AsEntityGraph;
 
 use fugue::ir::il::ecode::{Stmt, Var};
 use fugue::ir::il::traits::Variable;
+use fxhash::FxHashMap;
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
 
 use fixedbitset::FixedBitSet;
@@ -52,31 +53,26 @@ impl ReachingDefinitions {
                 variables.insert(*phi.var(), Some(lid.into()));
 
                 for var in phi.assign() {
-                    if var.generation() == 0 {
-                        variables.insert(*var, None);
-                    }
+                    variables.insert(*var, None);
                 }
             }
 
             for op in blk.operations() {
-                let lid = PhiOrStmt::from(LocatableId::from_parts(op.id().retype::<Stmt>(), op.location()));
+                let lid = LocatableId::from_parts(op.id().retype::<Stmt>(), op.location()).into();
                 op.defined_and_used_variables_with(&mut ldefs, &mut luses);
 
-                for d in ldefs.drain() {
-                    variables.insert(*d, Some(lid.clone()));
+                for def in ldefs.drain() {
+                    variables.insert(*def, Some(lid.clone()));
                 }
 
-                for u in luses.drain() {
-                    if u.generation() == 0 {
-                        variables.insert(*u, None);
-                    }
-                }
+                ldefs.clear();
+                luses.clear();
             }
         }
 
         let mut free_variables = FixedBitSet::with_capacity(variables.len());
-        for (idx, (_, v)) in variables.iter().enumerate() {
-            if v.is_none() {
+        for (idx, (var, _)) in variables.iter().enumerate() {
+            if var.generation() == 0 {
                 free_variables.put(idx);
             }
         }
@@ -90,17 +86,6 @@ impl ReachingDefinitions {
         slf.analyse::<BTreeMap<_, _>>(g).unwrap();
 
         slf
-    }
-
-    pub fn reaches<'a, S>(&self, stmt: &S, var: &Var) -> bool
-    where S: Identifiable<Located<Stmt>> {
-        let eid = stmt.id();
-        self.stmt_defs.get(&eid)
-            .and_then(|(iset, _)| {
-                self.variables.get_index_of(var)
-                    .map(|vid| iset.contains(vid))
-            })
-            .unwrap_or(false)
     }
 
     fn empty(&self) -> FixedBitSet {
@@ -117,6 +102,18 @@ impl ReachingDefinitions {
         self.variables.get_index_of(var).unwrap()
     }
 }
+
+// We could use a fixedbitset using a mapping from entity ids -> indices
+// to avoid costly set comparions/merges.
+//
+// We can compute this by walking over G in a single forward pass and
+// inserting each EntityId into an IndexSet:
+//
+// indexmap::set::IndexSet
+//
+// We can then build a FixedBitSet of size IndexSet::len and use the
+// insertion ordering of entity ids (to get an index) in the IndexSet
+// to determine an entity's membership in the FixedBitSet.
 
 impl<'ecode, E, G> FixedPointForward<'ecode, Block, E, G, DefinitionMap<'ecode>> for ReachingDefinitions
 where E: 'ecode,
@@ -152,6 +149,7 @@ where E: 'ecode,
         }
 
         for op in block.operations() {
+            // def -> gen
             op.defined_variables_with(&mut lgen);
 
             let last = bits.clone();

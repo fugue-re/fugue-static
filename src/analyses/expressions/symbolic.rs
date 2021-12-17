@@ -3,6 +3,7 @@ use fugue::ir::Translator;
 use fugue::ir::il::Location;
 use fugue::ir::il::ecode::{Expr, Stmt, Var};
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::models::block::Block;
@@ -10,12 +11,33 @@ use crate::models::cfg::CFG;
 use crate::traits::*;
 use crate::transforms::egraph::Rewriter;
 
-pub struct SymProp<'a> {
+pub struct SymExprs<'a> {
     translator: &'a Translator,
     mapping: BTreeMap<Var, Expr>,
 }
 
-impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for SymProp<'a> {
+impl<'a> SymExprs<'a> {
+    pub fn new(translator: &'a Translator) -> Self {
+        Self {
+            translator,
+            mapping: Default::default(),
+        }
+    }
+
+    pub fn propagator<'b>(&'b self) -> SymExprsProp<'b> {
+        SymExprsProp {
+            translator: self.translator,
+            mapping: Cow::Borrowed(&self.mapping),
+        }
+    }
+}
+
+pub struct SymExprsProp<'a> {
+    translator: &'a Translator,
+    mapping: Cow<'a, BTreeMap<Var, Expr>>,
+}
+
+impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for SymExprsProp<'a> {
     fn visit_expr_mut(&mut self, expr: &'ecode mut Expr) {
         match expr {
             Expr::UnRel(op, ref mut expr) => self.visit_expr_unrel_mut(*op, expr),
@@ -48,57 +70,33 @@ impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for SymProp<'a> {
         }
         *expr = Rewriter::default().simplify_expr(self.translator, expr);
     }
-
-    fn visit_stmt_mut(&mut self, stmt: &'ecode mut Stmt) {
-        match stmt {
-            Stmt::Assign(var, ref mut expr) => {
-                self.visit_expr_mut(expr);
-                self.mapping.insert(*var, expr.clone());
-            },
-            Stmt::Call(ref mut bt, ref mut args) => self.visit_stmt_call_mut(bt, args),
-            Stmt::Branch(ref mut bt) => self.visit_stmt_branch_mut(bt),
-            Stmt::CBranch(ref mut c, ref mut bt) => self.visit_stmt_cbranch_mut(c, bt),
-            Stmt::Intrinsic(name, ref mut args) => self.visit_stmt_intrinsic_mut(&*name, args),
-            Stmt::Store(ref mut t, ref mut s, sz, spc) => self.visit_stmt_store_mut(t, s, *sz, *spc),
-            Stmt::Return(ref mut bt) => self.visit_stmt_return_mut(bt),
-            Stmt::Skip => (),
-        }
-    }
 }
 
-impl<'a> SymProp<'a> {
-    pub fn new(translator: &'a Translator) -> Self {
-        Self {
-            translator,
-            mapping: Default::default(),
-        }
-    }
-
-    pub fn propagate_expressions<T>(&mut self, t: &mut T)
-    where T: SymPropFold {
-        t.propagate_expressions(self);
+impl<'a> Substitution<Location, BitVec, Var> for SymExprsProp<'a> {
+    fn replace(&mut self, var: &Var) -> Option<Expr> {
+        self.mapping.get(var).cloned()
     }
 }
 
 pub trait SymPropFold {
-    fn propagate_expressions(&mut self, p: &mut SymProp);
+    fn propagate_expressions(&self, p: &mut SymExprs);
 }
 
 impl<'a> SymPropFold for CFG<'a, Block> {
-    fn propagate_expressions(&mut self, p: &mut SymProp) {
+    fn propagate_expressions(&self, p: &mut SymExprs) {
         // TODO: this should run to a fixed point!!
         let rpo = self.reverse_post_order();
         for _ in 0..3 {
             for vx in rpo.iter() {
-                let blk = self.entity_mut(*vx);
-                blk.to_mut().propagate_expressions(p);
+                let blk = self.entity(*vx);
+                blk.propagate_expressions(p);
             }
         }
     }
 }
 
 impl SymPropFold for Block {
-    fn propagate_expressions(&mut self, p: &mut SymProp) {
+    fn propagate_expressions(&self, p: &mut SymExprs) {
         for phi in self.phis() {
             // if all incoming vars are the same, then we can propagate
             let vars = phi.assign();
@@ -111,20 +109,19 @@ impl SymPropFold for Block {
             }
         }
 
-        for op in self.operations_mut() {
+        for op in self.operations() {
             op.propagate_expressions(p);
         }
     }
 }
 
 impl SymPropFold for Stmt {
-    fn propagate_expressions(&mut self, p: &mut SymProp) {
-        p.visit_stmt_mut(self);
-    }
-}
-
-impl SymPropFold for Expr {
-    fn propagate_expressions(&mut self, p: &mut SymProp) {
-        p.visit_expr_mut(self);
+    fn propagate_expressions(&self, p: &mut SymExprs) {
+        if let Stmt::Assign(var, expr) = self {
+            let mut nexpr = expr.clone();
+            let mut propa = p.propagator();
+            propa.visit_expr_mut(&mut nexpr);
+            p.mapping.insert(*var, nexpr);
+        }
     }
 }

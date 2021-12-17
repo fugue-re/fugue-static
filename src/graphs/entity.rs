@@ -361,7 +361,7 @@ where
         self.entity_graph.edge_weight_mut(*ex)
             .map(|v| (s.into(), e.into(), v))
     }
-    
+
     pub fn add_entity<T>(&mut self, entity: T) -> VertexIndex<V>
     where
         T: IntoEntityRef<'a, T = V>,
@@ -382,6 +382,10 @@ where
     pub fn remove_vertex(&mut self, vertex: VertexIndex<V>) -> EntityRef<'a, V> {
         let id = self.entity_graph.remove_node(*vertex).unwrap();
         self.entities.remove(&id).unwrap().1
+    }
+
+    pub fn remove_edge(&mut self, edge: EdgeIndex<E>) -> Option<E> {
+        self.entity_graph.remove_edge(*edge)
     }
 
     pub fn add_entity_alias<T>(&mut self, entity: T) -> VertexIndex<V>
@@ -815,12 +819,12 @@ where
             || matches!(components.iter().next(), Some(v) if self.predecessors(*v).any(|(p, _)| p == *v))
     }
     */
-    
+
     pub fn visit_graph<T: VisitEntityGraph<'a, V, E>>(&self, visitor: &mut T) {
         for vx in self.entity_graph.node_indices().map(VertexIndex::from) {
             visitor.visit_entity_vertex(vx);
         }
-        
+
         for ex in self.entity_graph.edge_indices().map(EdgeIndex::from) {
             visitor.visit_entity_edge(ex);
         }

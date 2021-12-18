@@ -37,12 +37,20 @@ impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for RenameStack<'a> {
                 self.subst.apply_expr(&mut nlexpr);
 
                 match &mut *nlexpr {
+                    Expr::Var(ref sp) if SimpleVar::from(sp) == self.tracked => {
+                        let val = if sp.generation() != 0 {
+                            self.offsets.offsets_for(self.id).0
+                        } else {
+                            0
+                        };
+                        let var = Var::new(self.stack_space, val as u64, *size, 0);
+                        *expr = Expr::from(var);
+                    },
                     Expr::BinOp(op, ref mut lexpr, ref mut rexpr) => if *op == BinOp::ADD {
                         match (&mut **lexpr, &mut **rexpr) {
                             (Expr::Var(ref sp), Expr::Val(ref sft)) |
                                 (Expr::Val(ref sft), Expr::Var(ref sp)) if SimpleVar::from(sp) == self.tracked => {
                                     let mut val = sft.to_i64().unwrap();
-                                    println!("unshift: {} + {}", sp, val);
                                     if sp.generation() != 0 {
                                         val += self.offsets.offsets_for(self.id).0;
                                     }
@@ -91,6 +99,15 @@ impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for RenameStack<'a> {
                 self.subst.apply_expr(&mut nlexpr);
 
                 match &mut nlexpr {
+                    Expr::Var(ref sp) if SimpleVar::from(sp) == self.tracked => {
+                        let val = if sp.generation() != 0 {
+                            self.offsets.offsets_for(self.id).0
+                        } else {
+                            0
+                        };
+                        let var = Var::new(self.stack_space, val as u64, *size, 0);
+                        *stmt = Stmt::Assign(var, roexpr.clone());
+                    },
                     Expr::BinOp(op, ref mut lexpr, ref mut rexpr) => if *op == BinOp::ADD {
                         match (&mut **lexpr, &mut **rexpr) {
                             (Expr::Var(ref sp), Expr::Val(ref sft)) |

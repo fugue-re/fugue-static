@@ -1,19 +1,23 @@
 use fugue::bv::BitVec;
+use fugue::ir::{AddressSpaceId, Translator};
 use fugue::ir::il::Location;
 use fugue::ir::il::ecode::{BinOp, Expr, Stmt, Var};
+use fugue::ir::il::traits::Variable;
 
 use crate::analyses::expressions::symbolic::{SymPropFold, SymExprs, SymExprsProp};
-use crate::types::SimpleVar;
-use crate::models::{Block, CFG, Project};
-use crate::traits::{VisitMut, Substitutor};
-use crate::transforms::SSA;
-use fugue::ir::AddressSpaceId;
+use crate::analyses::stack::offsets::StackOffsets;
 
+use crate::models::{Block, CFG, Project};
+use crate::traits::{Substitutor, VisitMut};
+use crate::transforms::SSA;
+use crate::types::{Id, Identifiable, Located, SimpleVar};
 
 struct RenameStack<'a> {
+    id: Id<Located<Stmt>>,
     tracked: SimpleVar<'static>,
     stack_space: AddressSpaceId,
     subst: Substitutor<Location, BitVec, Var, SymExprsProp<'a>>,
+    offsets: &'a StackOffsets,
 }
 
 impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for RenameStack<'a> {
@@ -37,7 +41,11 @@ impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for RenameStack<'a> {
                         match (&mut **lexpr, &mut **rexpr) {
                             (Expr::Var(ref sp), Expr::Val(ref sft)) |
                                 (Expr::Val(ref sft), Expr::Var(ref sp)) if SimpleVar::from(sp) == self.tracked => {
-                                    let val = sft.to_i64().unwrap();
+                                    let mut val = sft.to_i64().unwrap();
+                                    println!("unshift: {} + {}", sp, val);
+                                    if sp.generation() != 0 {
+                                        val += self.offsets.offsets_for(self.id).0;
+                                    }
                                     let var = Var::new(self.stack_space, val as u64, *size, 0);
                                     *expr = Expr::from(var);
                                 },
@@ -87,7 +95,10 @@ impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for RenameStack<'a> {
                         match (&mut **lexpr, &mut **rexpr) {
                             (Expr::Var(ref sp), Expr::Val(ref sft)) |
                             (Expr::Val(ref sft), Expr::Var(ref sp)) if SimpleVar::from(sp) == self.tracked => {
-                                let val = sft.to_i64().unwrap();
+                                let mut val = sft.to_i64().unwrap();
+                                if sp.generation() != 0 {
+                                    val += self.offsets.offsets_for(self.id).0;
+                                }
                                 let var = Var::new(self.stack_space, val as u64, *size, 0);
                                 *stmt = Stmt::Assign(var, roexpr.clone());
                             },
@@ -103,42 +114,49 @@ impl<'a, 'ecode> VisitMut<'ecode, Location, BitVec, Var> for RenameStack<'a> {
     }
 }
 
-
 pub struct StackRename<'a> {
     tracked: SimpleVar<'static>,
     stack_space: AddressSpaceId,
-    sym_exprs: SymExprs<'a>,
+    offsets: &'a StackOffsets,
+    translator: &'a Translator,
 }
 
 impl<'a> StackRename<'a> {
     // NOTE: expects stack offset corrections have been applied
     // and that g is in SSA form
-    pub fn new<'g>(g: &CFG<'g, Block>, p: &'a Project) -> Self {
-        let mut prop = SymExprs::new(p.lifter().translator());
-
-        g.propagate_expressions(&mut prop);
-
+    pub fn new<'g>(offsets: &'a StackOffsets, p: &'a Project) -> Self {
         Self {
             tracked: p.lifter().stack_pointer().into(),
             stack_space: p.lifter().stack_space_id(),
-            sym_exprs: prop,
+            offsets,
+            translator: p.lifter().translator(),
         }
     }
 
     // NOTE: ensures that cfg is in SSA form
     pub fn apply<'g>(&self, cfg: &mut CFG<Block>) {
-        let subst = Substitutor::new(self.sym_exprs.propagator());
+        for (_, _, blk) in cfg.entities_mut() {
+            let mut prop = SymExprs::new(self.translator);
+            let blk = blk.to_mut();
 
-        let mut rs = RenameStack {
-            tracked: self.tracked.clone(),
-            stack_space: self.stack_space,
-            subst,
-        };
-
-        for bx in cfg.reverse_post_order().into_iter() {
-            let blk = cfg.entity_mut(bx).to_mut();
             for op in blk.operations_mut() {
+                let mut rs = RenameStack {
+                    id: op.id(),
+                    tracked: self.tracked.clone(),
+                    stack_space: self.stack_space,
+                    subst: Substitutor::new(prop.propagator()),
+                    offsets: self.offsets,
+                };
+
                 rs.visit_stmt_mut(op);
+
+                if matches!(***op, Stmt::Assign(var, _) if SimpleVar::from(var) == self.tracked) {
+                    // kill prop.
+                    prop.clear();
+                } else {
+                    // propagate assigns
+                    op.propagate_expressions(&mut prop);
+                }
             }
         }
 

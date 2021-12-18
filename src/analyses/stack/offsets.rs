@@ -48,6 +48,7 @@ impl<'a> From<EntityRef<'a, Located<Stmt>>> for PhiOrStmt<'a> {
 #[derive(Debug, Clone)]
 pub struct StackOffsets {
     tracked: Var,
+    statements: BTreeMap<Id<Located<Stmt>>, (i64, i64)>,
     adjustments: BTreeMap<Id<Block>, i64>,
 }
 
@@ -67,6 +68,7 @@ impl StackOffsets {
         let g = g.entity_graph();
 
         let mut vars = BTreeMap::<VertexIndex<_>, _>::default();
+        let mut stmts = BTreeMap::default();
         let mut offsets = BTreeMap::default();
 
         let mut lp_vars = variables!();
@@ -117,6 +119,12 @@ impl StackOffsets {
             let mut is_call = false;
 
             for op in b.operations() {
+                let mut sft = stmts.entry(op.id())
+                    .or_insert((
+                            Expression::from(b_in + shift as f64),
+                            Expression::from(b_in + shift as f64),
+                    ));
+
                 match &**op.value() {
                     Stmt::Assign(v, exp) => {
                         if SimpleVar::from(v) == tracked {
@@ -166,8 +174,11 @@ impl StackOffsets {
                     // hence we can say that the call is assigned the adjusted
                     // value
                     is_call = true;
+                    sft.1 = Expression::from(b_out);
                     offsets.insert(b.id(), Expression::from(b_out - (b_in + shift as f64)));
                     shift += extra_pop as i64;
+                } else {
+                    sft.1 = Expression::from(b_in + shift as f64);
                 }
             }
 
@@ -216,6 +227,14 @@ impl StackOffsets {
 
         Some(StackOffsets {
             tracked: **tracked,
+            statements: stmts
+                .into_iter()
+                .map(|(id, (e_in, e_out))| {
+                    let s_in = solution.eval(e_in) as i64;
+                    let s_out = solution.eval(e_out) as i64;
+                    (id, (s_in, s_out))
+                })
+                .collect(),
             adjustments: offsets
                 .into_iter()
                 .map(|(k, v)| (k, solution.eval(v) as i64))
@@ -229,6 +248,7 @@ impl StackOffsets {
     {
         Self::analyse_aux(g, tracked, convention).unwrap_or_else(|| Self {
             tracked: *tracked,
+            statements: Default::default(),
             adjustments: Default::default(),
         })
     }
@@ -272,7 +292,11 @@ impl StackOffsets {
         }
     }
 
-    pub fn offset_for(&self, blk: Id<Block>) -> i64 {
+    pub fn offsets_for(&self, stmt: Id<Located<Stmt>>) -> (i64, i64) {
+        self.statements.get(&stmt).copied().unwrap_or((0, 0))
+    }
+
+    pub fn adjustment_for(&self, blk: Id<Block>) -> i64 {
         self.adjustments.get(&blk).copied().unwrap_or(0)
     }
 
@@ -284,6 +308,7 @@ impl StackOffsets {
 #[cfg(test)]
 mod test {
     use crate::analyses::expressions::symbolic::{SymPropFold, SymExprs, SymExprsProp};
+    use crate::analyses::stack::variables::StackRename;
     use crate::models::{Lifter, Project};
     use crate::traits::{VisitMut, Substitutor};
     use crate::traits::oracle::database_oracles;
@@ -326,7 +351,7 @@ mod test {
             }
         }
 
-        let sample2 = db.function("sample2").unwrap();
+        let sample2 = db.function("__libc_csu_init").unwrap();
         let fid = project.add_function(sample2.address()).unwrap();
 
         let sample2f = project.lookup_by_id(fid).unwrap();
@@ -338,6 +363,7 @@ mod test {
             &project.lifter().convention(),
         );
 
+        /*
         let mut prop = SymExprs::new(project.lifter().translator());
 
         offs.apply(&mut cfg);
@@ -470,6 +496,19 @@ mod test {
                 |_| "".to_string()
             )
         );
+        */
+        cfg.ssa();
+
+        let rs = StackRename::new(&offs, &project);
+        rs.apply(&mut cfg);
+
+        for vx in cfg.reverse_post_order() {
+            let blk = cfg.entity(vx);
+            for op in blk.operations() {
+                let (sft_in, sft_out) = offs.statements[&op.id()];
+                println!("{} {} ({}, {})", op.location(), op.display_with(Some(project.lifter().translator())), sft_in, sft_out);
+            }
+        }
 
         Ok(())
     }

@@ -308,6 +308,7 @@ impl StackOffsets {
 #[cfg(test)]
 mod test {
     use crate::analyses::expressions::symbolic::{SymPropFold, SymExprs, SymExprsProp};
+    use crate::analyses::reaching_definitions::ReachingDefinitions;
     use crate::analyses::stack::variables::StackRename;
     use crate::models::{Lifter, Project};
     use crate::traits::{VisitMut, Substitutor};
@@ -317,6 +318,7 @@ mod test {
     use fugue::ir::il::traits::*;
     use fugue::ir::il::Location;
     use fugue::ir::{LanguageDB, AddressSpaceId};
+    use itertools::Itertools;
 
     use crate::transforms::SSA;
     use crate::visualise::AsDot;
@@ -502,11 +504,26 @@ mod test {
         let rs = StackRename::new(&offs, &project);
         rs.apply(&mut cfg);
 
+        let rd = ReachingDefinitions::new(&cfg);
+
         for vx in cfg.reverse_post_order() {
             let blk = cfg.entity(vx);
             for op in blk.operations() {
                 let (sft_in, sft_out) = offs.statements[&op.id()];
-                println!("{} {} ({}, {})", op.location(), op.display_with(Some(project.lifter().translator())), sft_in, sft_out);
+                print!(
+                    "{} {} ({}, {})",
+                    op.location(),
+                    op.display_with(Some(project.lifter().translator())),
+                    sft_in,
+                    sft_out,
+                );
+
+                let reaching = rd.all_reaching_vars(op);
+                if let Some(rd) = reaching {
+                    println!(" [{}]", rd.filter(|(v, _)| v.space().is_register()).map(|(v, _)| v.display_with(Some(project.lifter().translator()))).format(", "));
+                } else {
+                    println!(" []");
+                }
             }
         }
 
@@ -534,7 +551,7 @@ mod test {
             project.add_region_mapping_with(seg.name(), seg.address(), seg.endian(), seg.bytes());
         }
 
-        let sample2 = db.function("sub_2A0").unwrap();
+        let sample2 = db.function("sub_DF4").unwrap();
         let fid = project.add_function(sample2.address()).unwrap();
 
         let sample2f = project.lookup_by_id(fid).unwrap();
@@ -546,6 +563,37 @@ mod test {
             &project.lifter().convention(),
         );
 
+        cfg.ssa();
+
+        let rs = StackRename::new(&offs, &project);
+        rs.apply(&mut cfg);
+
+        let rd = ReachingDefinitions::new(&cfg);
+
+        for vx in cfg.reverse_post_order() {
+            let blk = cfg.entity(vx);
+            for op in blk.operations() {
+                let (sft_in, sft_out) = offs.statements[&op.id()];
+                print!(
+                    "{} {} ({}, {})",
+                    op.location(),
+                    op.display_with(Some(project.lifter().translator())),
+                    sft_in,
+                    sft_out,
+                );
+
+                let reaching = rd.all_reaching_vars(op);
+                if let Some(rd) = reaching {
+                    println!(" [{}]", rd.filter(|(v, _)| v.space().is_register()).map(|(v, _)| v.display_with(Some(project.lifter().translator()))).format(", "));
+                } else {
+                    println!(" []");
+                }
+            }
+        }
+
+        Ok(())
+
+        /*
         let mut prop = SymExprs::new(project.lifter().translator());
 
         offs.apply(&mut cfg);
@@ -572,5 +620,6 @@ mod test {
         );
 
         Ok(())
+        */
     }
 }

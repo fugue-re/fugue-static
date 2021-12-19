@@ -10,7 +10,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::convert::Infallible;
 
-use fixedbitset::FixedBitSet;
+use fixedbitset::{FixedBitSet, Ones};
 type IndexMap<K, V> = indexmap::IndexMap<K, V, fxhash::FxBuildHasher>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -92,7 +92,19 @@ impl ReachingDefinitions {
         slf
     }
 
-    pub fn reaches<'a, S>(&self, stmt: &S, var: &Var) -> bool
+    pub fn get(&self, var: &Var) -> Option<(usize, &Option<PhiOrStmt>)> {
+        self.variables.get_full(var).map(|(i, _, v)| (i, v))
+    }
+
+    pub fn get_index(&self, var: usize) -> Option<(&Var, &Option<PhiOrStmt>)> {
+        self.variables.get_index(var)
+    }
+
+    pub fn get_index_of(&self, var: &Var) -> Option<usize> {
+        self.variables.get_index_of(var)
+    }
+
+    pub fn reaches<S>(&self, stmt: &S, var: &Var) -> bool
     where S: Identifiable<Located<Stmt>> {
         let eid = stmt.id();
         self.stmt_defs.get(&eid)
@@ -101,6 +113,22 @@ impl ReachingDefinitions {
                     .map(|vid| iset.contains(vid))
             })
             .unwrap_or(false)
+    }
+
+    pub fn all_reaching<S>(&self, stmt: &S) -> Option<&FixedBitSet>
+    where S: Identifiable<Located<Stmt>> {
+        let eid = stmt.id();
+        self.stmt_defs.get(&eid).map(|(iset, _)| iset)
+    }
+
+    pub fn all_reaching_vars<'a, S>(&'a self, stmt: &S) -> Option<ReachingDefinitionIter<'a>>
+    where S: Identifiable<Located<Stmt>> {
+        let eid = stmt.id();
+        let bits = &self.stmt_defs.get(&eid)?.0;
+        Some(ReachingDefinitionIter {
+            iter: bits.ones(),
+            defs: self,
+        })
     }
 
     fn empty(&self) -> FixedBitSet {
@@ -115,6 +143,24 @@ impl ReachingDefinitions {
 
     fn var_id(&self, var: &Var) -> usize {
         self.variables.get_index_of(var).unwrap()
+    }
+}
+
+pub struct ReachingDefinitionIter<'a> {
+    iter: Ones<'a>,
+    defs: &'a ReachingDefinitions,
+}
+
+impl<'a> Iterator for ReachingDefinitionIter<'a> {
+    type Item = (&'a Var, &'a Option<PhiOrStmt>);
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+            .and_then(|i| self.defs.variables.get_index(i))
     }
 }
 
@@ -141,15 +187,21 @@ where E: 'ecode,
             gen.insert(var, self.singleton(phi.var()));
         }
 
-        let mut bits = self.empty();
-
-        if gen.is_empty() {
-            bits.union_with(&self.free_variables);
+        let mut bits = if gen.is_empty() {
+            for fv in self.free_variables.ones() {
+                let v = *self.variables.get_index(fv).unwrap().0;
+                let mut fv_bits = self.empty();
+                fv_bits.put(fv);
+                gen.insert(SimpleVar::from(v), fv_bits);
+            }
+            self.free_variables.clone()
         } else {
+            let mut bits = self.empty();
             for set in gen.values() {
                 bits.union_with(set);
             }
-        }
+            bits
+        };
 
         for op in block.operations() {
             op.defined_variables_with(&mut lgen);
@@ -159,7 +211,13 @@ where E: 'ecode,
             for d in lgen.iter() {
                 let var = SimpleVar::from(*d);
                 match gen.entry(var) {
-                    Entry::Vacant(e) => { e.insert(self.singleton(d)); },
+                    Entry::Vacant(e) => {
+                        // if gen and no reaching, then assume that if FV exists, then it reaches, so kill
+                        if let Some(idx) = self.variables.get_index_of(&d.with_generation(0)) {
+                            bits.set(idx, false);
+                        }
+                        e.insert(self.singleton(d));
+                    },
                     Entry::Occupied(mut e) => {
                         let v = e.get_mut();
                         bits.difference_with(v);

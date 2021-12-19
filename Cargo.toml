@@ -25,3 +25,4 @@ serde = { version = "1", features = ["derive"] }
 smallvec = "1"
 thiserror = "1"
 ustr = { version = "0.8", features = ["serialization"] }
+vec_map = "0.8"

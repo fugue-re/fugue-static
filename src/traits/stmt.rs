@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use fugue::ir::il::ecode::{ExprT, StmtT};
 use crate::traits::{Variables, ValueRefCollector, ValueMutCollector, Visit, VisitMut};
 
-pub trait StmtExt {
+pub trait StmtExt<Loc, Val, Var> {
     fn is_skip(&self) -> bool;
     fn is_branch(&self) -> bool;
     fn is_jump(&self) -> bool;
@@ -11,9 +11,15 @@ pub trait StmtExt {
     fn is_intrinsic(&self) -> bool;
     fn is_return(&self) -> bool;
     fn has_fall(&self) -> bool;
+
+    fn for_each_variable_def<F: FnMut(&Var)>(&self, f: F);
+    fn for_each_variable_def_mut<F: FnMut(&mut Var)>(&mut self, f: F);
+
+    fn for_each_variable_use<F: FnMut(&Var)>(&self, f: F);
+    fn for_each_variable_use_mut<F: FnMut(&mut Var)>(&mut self, f: F);
 }
 
-impl<Loc, Val, Var> StmtExt for StmtT<Loc, Val, Var> {
+impl<Loc, Val, Var> StmtExt<Loc, Val, Var> for StmtT<Loc, Val, Var> {
     fn is_branch(&self) -> bool {
         matches!(self,
                  StmtT::Branch(_) |
@@ -49,6 +55,46 @@ impl<Loc, Val, Var> StmtExt for StmtT<Loc, Val, Var> {
 
     fn is_skip(&self) -> bool {
         matches!(self, StmtT::Skip)
+    }
+
+    fn for_each_variable_def<F: FnMut(&Var)>(&self, mut f: F) {
+        if let StmtT::Assign(ref v, _) = self {
+            f(v)
+        }
+    }
+
+    fn for_each_variable_def_mut<F: FnMut(&mut Var)>(&mut self, mut f: F) {
+        if let StmtT::Assign(ref mut v, _) = self {
+            f(v)
+        }
+    }
+
+    fn for_each_variable_use<F: FnMut(&Var)>(&self, mut f: F) {
+        ForEachUse(&mut f, PhantomData).visit_stmt(self);
+    }
+
+    fn for_each_variable_use_mut<F: FnMut(&mut Var)>(&mut self, mut f: F) {
+        ForEachUseMut(&mut f, PhantomData).visit_stmt_mut(self);
+    }
+}
+
+struct ForEachUse<'a, 'ecode, Var, F>(&'a mut F, PhantomData<&'ecode Var>)
+    where F: FnMut(&'ecode Var);
+
+impl<'a, 'ecode, Loc, Val, Var, F> Visit<'ecode, Loc, Val, Var> for ForEachUse<'a, 'ecode, Var, F>
+where F: FnMut(&'ecode Var) {
+    fn visit_expr_var(&mut self, var: &'ecode Var) {
+        self.0(var)
+    }
+}
+
+struct ForEachUseMut<'a, 'ecode, Var, F>(&'a mut F, PhantomData<&'ecode mut Var>)
+    where F: FnMut(&'ecode mut Var);
+
+impl<'a, 'ecode, Loc, Val, Var, F> VisitMut<'ecode, Loc, Val, Var> for ForEachUseMut<'a, 'ecode, Var, F>
+where F: FnMut(&'ecode mut Var) {
+    fn visit_expr_var_mut(&mut self, var: &'ecode mut Var) {
+        self.0(var)
     }
 }
 

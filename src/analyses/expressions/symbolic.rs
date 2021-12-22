@@ -90,7 +90,7 @@ impl<'a> SymPropFold for CFG<'a, Block> {
     fn propagate_expressions(&self, p: &mut SymExprs) {
         // TODO: this should run to a fixed point!!
         let rpo = self.reverse_post_order();
-        for _ in 0..100 {
+        for _ in 0..3 {
             for vx in rpo.iter() {
                 let blk = self.entity(*vx);
                 blk.propagate_expressions(p);

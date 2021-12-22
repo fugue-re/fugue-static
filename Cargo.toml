@@ -1,6 +1,6 @@
 [package]
 name = "fugue-static"
-version = "0.2.55"
+version = "0.2.56"
 authors = ["Sam Thomas <st@xv.ax>"]
 edition = "2018"
 
@@ -9,7 +9,9 @@ bincode = "1"
 educe = "0.4"
 egg = "0.7"
 env_logger = "0.9"
+hashcons = { version = "0.1", registry = "fugue" }
 indexmap = "1.7"
+fnv = "1"
 fxhash = "0.2"
 good_lp = { version = "1.3" }
 itertools = "0.10"

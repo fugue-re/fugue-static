@@ -4,7 +4,7 @@ use fugue::bv::BitVec;
 use fugue::db;
 
 use fugue::ir::Translator;
-use fugue::ir::disassembly::ContextDatabase;
+use fugue::ir::disassembly::{ContextDatabase, IRBuilderArena};
 use fugue::ir::il::ecode::{BranchTargetT, ECode, Location, StmtT, Var};
 use fugue::ir::il::traits::*;
 
@@ -196,6 +196,7 @@ where
 
 pub struct FunctionBuilder<'trans> {
     lifter: &'trans Lifter,
+    irb: &'trans mut IRBuilderArena,
     context_db: &'trans mut ContextDatabase,
     symbol: String,
     address: u64,
@@ -204,9 +205,10 @@ pub struct FunctionBuilder<'trans> {
 }
 
 impl<'trans> FunctionBuilder<'trans> {
-    pub fn new(lifter: &'trans Lifter, context_db: &'trans mut ContextDatabase, address: u64, symbol: impl Into<String>) -> Self {
+    pub fn new(lifter: &'trans Lifter, irb: &'trans mut IRBuilderArena, context_db: &'trans mut ContextDatabase, address: u64, symbol: impl Into<String>) -> Self {
         Self {
             lifter,
+            irb,
             context_db,
             symbol: symbol.into(),
             address,
@@ -232,7 +234,7 @@ impl<'trans> FunctionBuilder<'trans> {
     where F: FnMut(&mut ECode) {
         let id = self.block_indices.len();
         let rid = self.blocks.len();
-        let (blocks, mut targets, _, _) = self.lifter.lift_block(&mut self.context_db, address, bytes, hint, merge, transform);
+        let (blocks, mut targets, _, _) = self.lifter.lift_block(&mut self.irb, &mut self.context_db, address, bytes, hint, merge, transform);
 
         if blocks.is_empty() {
             None

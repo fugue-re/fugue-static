@@ -1,6 +1,6 @@
 use fugue::bytes::Endian;
 use fugue::ir::convention::Convention;
-use fugue::ir::disassembly::ContextDatabase;
+use fugue::ir::disassembly::{ContextDatabase, IRBuilderArena};
 use fugue::ir::il::ecode::{BranchTarget, ECode, Stmt, Var};
 use fugue::ir::il::Location;
 use fugue::ir::{AddressSpace, AddressSpaceId, LanguageDB, Translator};
@@ -178,6 +178,10 @@ impl Lifter {
         self.translator.context_database()
     }
 
+    pub fn irb(&self, size: usize) -> IRBuilderArena {
+        IRBuilderArena::with_capacity(size)
+    }
+
     pub fn global_space(&self) -> &AddressSpace {
         self.translator().manager().space_by_id(self.global_space)
     }
@@ -239,6 +243,7 @@ impl Lifter {
     // blocks.
     pub fn lift_block<F>(
         &self,
+        irb: &mut IRBuilderArena,
         ctxt: &mut ContextDatabase,
         addr: u64,
         bytes: &[u8],
@@ -465,9 +470,10 @@ mod test {
         let lifter = builder.build("x86:LE:64:default", "gcc")?;
 
         let mut ctxt = lifter.context();
+        let mut irb = lifter.irb(1024);
 
         let mut lift =
-            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, None, true, |_| ());
+            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut irb, &mut ctxt, addr, bytes, None, true, |_| ());
 
         let (blks1, _, _, len1) = lift(0x1000, &[0x90u8]);
         assert_eq!(blks1.len(), 1);
@@ -491,7 +497,7 @@ mod test {
         assert_eq!(len5, 4);
 
         let mut lift2 =
-            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut ctxt, addr, bytes, Some(2), true, |_| ());
+            |addr: u64, bytes: &[u8]| lifter.lift_block(&mut irb, &mut ctxt, addr, bytes, Some(2), true, |_| ());
 
         let (blks2, _, _, len2) = lift2(0x1001, &[0x8b, 0xc7, 0x5f, 0x5e]);
         assert_eq!(blks2.len(), 1); // stosb .. gives two blocks

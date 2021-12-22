@@ -205,8 +205,10 @@ impl Project {
             self.lifter().temporary_space_id(),
         );
 
+        let mut irb = self.lifter.irb(1024);
         let mut fcn_builder = FunctionBuilder::new(
             &self.lifter,
+            &mut irb,
             &mut self.disassembly_context,
             location.address().offset(),
             &*sym,

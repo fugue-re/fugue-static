@@ -156,9 +156,9 @@ impl fmt::Display for Type {
         match self {
             Self::Void => write!(f, "void"),
             Self::Bool => write!(f, "bool"),
-            Self::Float(format) => write!(f, "f{}", format.bits()),
-            Self::Signed(bits) => write!(f, "i{}", bits),
-            Self::Unsigned(bits) => write!(f, "u{}", bits),
+            Self::Float(format) => write!(f, "float{}", format.bits()),
+            Self::Signed(bits) => write!(f, "int{}", bits),
+            Self::Unsigned(bits) => write!(f, "uint{}", bits),
             Self::Pointer(typ, _) => write!(f, "ptr<{}>", typ),
             Self::Function(typ, typs) => {
                 write!(f, "fn(")?;

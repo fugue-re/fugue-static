@@ -11,9 +11,7 @@ use crate::graphs::{AsEntityGraph, AsEntityGraphMut};
 use crate::models::cfg::BranchKind;
 use crate::models::Block;
 use crate::traits::stmt::*;
-use crate::types::{
-    Entity, Id, Identifiable, Locatable, Located, SimpleVar,
-};
+use crate::types::{Entity, Id, Identifiable, Locatable, Located, SimpleVar};
 
 /*
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -119,11 +117,10 @@ impl StackOffsets {
             let mut is_call = false;
 
             for op in b.operations() {
-                let mut sft = stmts.entry(op.id())
-                    .or_insert((
-                            Expression::from(b_in + shift as f64),
-                            Expression::from(b_in + shift as f64),
-                    ));
+                let mut sft = stmts.entry(op.id()).or_insert((
+                    Expression::from(b_in + shift as f64),
+                    Expression::from(b_in + shift as f64),
+                ));
 
                 match &**op.value() {
                     Stmt::Assign(v, exp) => {
@@ -307,17 +304,17 @@ impl StackOffsets {
 
 #[cfg(test)]
 mod test {
-    use crate::analyses::expressions::symbolic::{SymPropFold, SymExprs, SymExprsProp};
+    use crate::analyses::expressions::symbolic::{SymExprs, SymExprsProp, SymPropFold};
     use crate::analyses::reaching_definitions::ReachingDefinitions;
     use crate::analyses::stack::variables::StackRename;
     use crate::models::{Lifter, Project};
-    use crate::traits::{VisitMut, Substitutor};
     use crate::traits::oracle::database_oracles;
+    use crate::traits::{Substitutor, VisitMut};
     use crate::types::EntityIdMapping;
     use fugue::db::Database;
     use fugue::ir::il::traits::*;
     use fugue::ir::il::Location;
-    use fugue::ir::{LanguageDB, AddressSpaceId};
+    use fugue::ir::{AddressSpaceId, LanguageDB};
     use itertools::Itertools;
 
     use crate::transforms::SSA;
@@ -520,7 +517,12 @@ mod test {
 
                 let reaching = rd.all_reaching_vars(op);
                 if let Some(rd) = reaching {
-                    println!(" [{}]", rd.filter(|(v, _)| v.space().is_register()).map(|(v, _)| v.display_with(Some(project.lifter().translator()))).format(", "));
+                    println!(
+                        " [{}]",
+                        rd.filter(|(v, _)| v.space().is_register())
+                            .map(|(v, _)| v.display_with(Some(project.lifter().translator())))
+                            .format(", ")
+                    );
                 } else {
                     println!(" []");
                 }
@@ -584,7 +586,12 @@ mod test {
 
                 let reaching = rd.all_reaching_vars(op);
                 if let Some(rd) = reaching {
-                    println!(" [{}]", rd.filter(|(v, _)| v.space().is_register()).map(|(v, _)| v.display_with(Some(project.lifter().translator()))).format(", "));
+                    println!(
+                        " [{}]",
+                        rd.filter(|(v, _)| v.space().is_register())
+                            .map(|(v, _)| v.display_with(Some(project.lifter().translator())))
+                            .format(", ")
+                    );
                 } else {
                     println!(" []");
                 }

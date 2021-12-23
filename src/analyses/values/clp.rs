@@ -1,4 +1,5 @@
 use fugue::bv::BitVec;
+use intervals::Interval;
 
 use std::borrow::Borrow;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
@@ -58,7 +59,7 @@ fn shl_exact(bv: &BitVec, bits: usize) -> BitVec {
 }
 
 fn extract_lh(bv: &BitVec, high: usize, low: usize) -> BitVec {
-    assert!(high > low);
+    assert!(high >= low);
 
     let bv = if low > 0 {
         bv >> (low as u32)
@@ -66,7 +67,7 @@ fn extract_lh(bv: &BitVec, high: usize, low: usize) -> BitVec {
         bv.clone()
     };
 
-    bv.unsigned_cast(high - low)
+    bv.unsigned_cast(1 + high - low)
 }
 
 fn factor_2s(w: &BitVec) -> (BitVec, usize) {
@@ -136,6 +137,33 @@ impl CLP {
         let step = BitVec::one(base.bits());
         let card = BitVec::one(base.bits());
         Self::new_with(base, step, card)
+    }
+
+    pub fn range<U, V>(start: U, end: V) -> Self
+    where
+        U: Into<BitVec>,
+        V: Into<BitVec>,
+    {
+        let mut start = start.into();
+        let mut end = end.into();
+
+        let signed = start.is_signed() || end.is_signed();
+        let bits = start.bits().max(end.bits());
+
+        if start.bits() != bits {
+            start = if signed { start.signed_cast(bits) } else { start.unsigned_cast(bits) }
+        }
+
+        if end.bits() != bits {
+            end = if signed { end.signed_cast(bits) } else { end.unsigned_cast(bits) }
+        }
+
+        if end < start { // empty
+            Self::bottom(bits)
+        } else {
+            let cardn = (&end - &start).abs().unsigned_cast(1 + bits);
+            Self::new_with(start, BitVec::one(bits), cardn)
+        }
     }
 
     pub fn new_with<U, V, W>(base: U, step: V, card: W) -> Self
@@ -238,7 +266,7 @@ impl CLP {
         if self.card.is_zero() {
             Self::bottom(sz)
         } else if self.step.is_zero() || self.card.is_one() {
-            Self::new_with(self.base.clone(), BitVec::zero(sz), BitVec::one(sz + 1))
+            Self::new_with(self.base.clone().unsigned(), BitVec::zero(sz), BitVec::one(sz + 1))
         } else if self.card == two {
             let e = &self.base + &self.step;
             if e >= self.base {
@@ -247,9 +275,13 @@ impl CLP {
                 Self::new_with(e, -&self.step, two)
             }
         } else if self.is_infinite() {
-            Self::infinite(self.base.clone(), self.step.clone())
+            Self::infinite(self.base.clone().unsigned(), self.step.clone())
         } else {
-            self.clone()
+            Self {
+                base: self.base.clone().unsigned(),
+                step: self.step.clone(),
+                card: self.card.clone(),
+            }
         }
     }
 
@@ -445,8 +477,10 @@ impl CLP {
     }
 
     pub fn translate(&self, bv: &BitVec) -> CLP {
+        let signed = self.base.is_signed() || bv.is_signed();
+        let base = &self.base + bv;
         Self {
-            base: &self.base + bv,
+            base: if signed { base.signed() } else { base },
             step: self.step.clone(),
             card: self.card.clone(),
         }
@@ -505,6 +539,7 @@ impl CLP {
         }
 
         let translation = p1.base.clone();
+
         let translated_p1 = p1.translate(&-&p1.base);
         let translated_p2 = p2.translate(&-&p1.base);
 
@@ -535,6 +570,7 @@ impl CLP {
                 }
             } else {
                 let (x, _) = p1.step.diophantine(&p2.step, &p2.base)?;
+
                 let base = &x * &p1.step;
                 let min_e = if p1_infinite {
                     e2
@@ -738,7 +774,6 @@ impl CLP {
         }
     }
 
-    // subpiece
     pub fn extract(&self, hi: Option<usize>, lo: Option<usize>, signed: bool) -> CLP {
         let lo = lo.unwrap_or(0);
         let hi = hi.map(|hi| hi - lo);
@@ -1171,11 +1206,11 @@ impl Mul for &'_ CLP {
 
         if self.step.is_zero() || self.card.is_one() {
             let base = &rhs.base * &self.base;
-            let step = &rhs.step * &self.step;
+            let step = &rhs.step * &self.base;
             CLP::new_with(base, step, rhs.card.clone())
         } else if rhs.step.is_zero() || rhs.card.is_one() {
             let base = &self.base * &rhs.base;
-            let step = &self.step * &rhs.step;
+            let step = &self.step * &rhs.base;
             CLP::new_with(base, step, self.card.clone())
         } else {
             let base = mul_exact(&self.base, &rhs.base);
@@ -1480,6 +1515,31 @@ impl Iterator for CLPIter {
             (size, Some(size))
         } else {
             (0, None) // is usize::MAX correct?
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_simple() {
+        let mut clp = CLP::top(32);
+
+        let l = BitVec::from(-10i32).signed();
+        let u = BitVec::from(0x1fi32).signed();
+
+        let fixed = CLP::range(l, u);
+
+        clp = clp.intersection(&fixed);
+        clp = clp + CLP::new(20u32);
+        clp = clp * CLP::new(4u32);
+        clp = clp - CLP::new(0xfu32);
+
+        for v in clp.iter().take(100) {
+            let v = v.signed();
+            println!("{} {}", v, v.is_negative());
         }
     }
 }

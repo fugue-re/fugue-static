@@ -62,8 +62,6 @@ where
             write!(
                 f,
                 "{} {}←{} {}ϕ{}(<empty>)",
-                self.keyword_start,
-                self.keyword_end,
                 self.phi.var.display_full(
                     self.trans,
                     self.branch_start,
@@ -79,6 +77,8 @@ where
                     self.variable_start,
                     self.variable_end,
                 ),
+                self.keyword_start,
+                self.keyword_end,
                 self.keyword_start,
                 self.keyword_end,
             )?;
@@ -86,8 +86,6 @@ where
             write!(
                 f,
                 "{} {}←{} {}ϕ{}({}",
-                self.keyword_start,
-                self.keyword_end,
                 self.phi.var.display_full(
                     self.trans,
                     self.branch_start,
@@ -103,6 +101,8 @@ where
                     self.variable_start,
                     self.variable_end,
                 ),
+                self.keyword_start,
+                self.keyword_end,
                 self.keyword_start,
                 self.keyword_end,
                 self.phi.vars[0].display_full(

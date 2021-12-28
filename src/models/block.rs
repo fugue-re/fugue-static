@@ -111,6 +111,14 @@ where
 {
     blk: &'blk BlockT<Loc, Val, Var>,
     trans: Option<&'trans Translator>,
+    keyword_start: &'trans str,
+    keyword_end: &'trans str,
+    location_start: &'trans str,
+    location_end: &'trans str,
+    value_start: &'trans str,
+    value_end: &'trans str,
+    variable_start: &'trans str,
+    variable_end: &'trans str,
 }
 
 impl<'blk, 'trans, Loc, Val, Var> Display for BlockDisplay<'blk, 'trans, Loc, Val, Var>
@@ -123,14 +131,43 @@ where
         for phi in self.blk.phis.iter() {
             writeln!(
                 f,
-                "{} {}",
+                "{}{}{} {}",
+                self.location_start,
                 phi.location(),
-                (**phi.value()).display_with(self.trans)
+                self.location_end,
+                (**phi.value()).display_full(
+                    self.trans,
+                    self.keyword_start,
+                    self.keyword_end,
+                    self.location_start,
+                    self.location_end,
+                    self.value_start,
+                    self.value_end,
+                    self.variable_start,
+                    self.variable_end,
+                )
             )?;
         }
 
         for stmt in self.blk.operations.iter() {
-            writeln!(f, "{} {}", stmt.location(), stmt.display_with(self.trans))?;
+            writeln!(
+                f,
+                "{}{}{} {}",
+                self.location_start,
+                stmt.location(),
+                self.location_end,
+                stmt.display_full(
+                    self.trans,
+                    self.keyword_start,
+                    self.keyword_end,
+                    self.location_start,
+                    self.location_end,
+                    self.value_start,
+                    self.value_end,
+                    self.variable_start,
+                    self.variable_end,
+                )
+            )?
         }
 
         Ok(())
@@ -309,12 +346,15 @@ impl Block {
 
     pub fn empty(location: Location) -> Entity<Self> {
         let lid = LocatableId::new("blk", location);
-        Entity::from_parts(lid.id(), Block {
-            id: lid,
-            operations: Vec::default(),
-            phis: Default::default(),
-            next_blocks: Vec::default(),
-        })
+        Entity::from_parts(
+            lid.id(),
+            Block {
+                id: lid,
+                operations: Vec::default(),
+                phis: Default::default(),
+                next_blocks: Vec::default(),
+            },
+        )
     }
 }
 
@@ -397,7 +437,10 @@ where
         &mut self.operations
     }
 
-    pub fn translate<T: TranslateIR<Loc, Val, Var>>(self, t: &T) -> BlockT<T::TLoc, T::TVal, T::TVar>
+    pub fn translate<T: TranslateIR<Loc, Val, Var>>(
+        self,
+        t: &T,
+    ) -> BlockT<T::TLoc, T::TVal, T::TVar>
     where
         T::TLoc: Clone,
         T::TVal: Clone,
@@ -405,8 +448,16 @@ where
     {
         BlockT {
             id: self.id.retype(),
-            phis: self.phis.into_iter().map(|e| e.map(|lphi| lphi.map(|phi| phi.translate(t)))).collect(),
-            operations: self.operations.into_iter().map(|e| e.map(|lop| lop.map(|op| op.translate(t)))).collect(),
+            phis: self
+                .phis
+                .into_iter()
+                .map(|e| e.map(|lphi| lphi.map(|phi| phi.translate(t))))
+                .collect(),
+            operations: self
+                .operations
+                .into_iter()
+                .map(|e| e.map(|lop| lop.map(|op| op.translate(t))))
+                .collect(),
             next_blocks: self.next_blocks.into_iter().map(|nb| nb.retype()).collect(),
         }
     }
@@ -420,13 +471,29 @@ where
 {
     type Target = BlockDisplay<'blk, 'trans, Loc, Val, Var>;
 
-    fn display_with(
+    fn display_full(
         &'blk self,
-        t: Option<&'trans Translator>,
-    ) -> BlockDisplay<'blk, 'trans, Loc, Val, Var> {
+        trans: Option<&'trans Translator>,
+        keyword_start: &'trans str,
+        keyword_end: &'trans str,
+        location_start: &'trans str,
+        location_end: &'trans str,
+        value_start: &'trans str,
+        value_end: &'trans str,
+        variable_start: &'trans str,
+        variable_end: &'trans str,
+    ) -> Self::Target {
         BlockDisplay {
             blk: self,
-            trans: t,
+            trans,
+            keyword_start,
+            keyword_end,
+            location_start,
+            location_end,
+            value_start,
+            value_end,
+            variable_start,
+            variable_end,
         }
     }
 }

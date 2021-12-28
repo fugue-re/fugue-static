@@ -243,7 +243,7 @@ impl Lifter {
     // blocks.
     pub fn lift_block<F>(
         &self,
-        irb: &mut IRBuilderArena,
+        _irb: &mut IRBuilderArena,
         ctxt: &mut ContextDatabase,
         addr: u64,
         bytes: &[u8],

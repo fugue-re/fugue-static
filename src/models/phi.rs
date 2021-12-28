@@ -38,6 +38,14 @@ where
 pub struct PhiDisplay<'a, 'trans, Var> {
     phi: &'a PhiT<Var>,
     trans: Option<&'trans Translator>,
+    keyword_start: &'trans str,
+    keyword_end: &'trans str,
+    location_start: &'trans str,
+    location_end: &'trans str,
+    value_start: &'trans str,
+    value_end: &'trans str,
+    variable_start: &'trans str,
+    variable_end: &'trans str,
 }
 
 impl<'a, 'trans, Var> Display for PhiDisplay<'a, 'trans, Var>
@@ -47,16 +55,68 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.phi.vars.is_empty() {
             // NOTE: should never happen
-            write!(f, "{} ← ϕ(<empty>)", self.phi.var.display_with(self.trans))?;
+            write!(
+                f,
+                "{} ← {}ϕ{}(<empty>)",
+                self.phi.var.display_full(
+                    self.trans,
+                    self.keyword_start,
+                    self.keyword_end,
+                    self.location_start,
+                    self.location_end,
+                    self.value_start,
+                    self.value_end,
+                    self.variable_start,
+                    self.variable_end,
+                ),
+                self.keyword_start,
+                self.keyword_end,
+            )?;
         } else {
             write!(
                 f,
-                "{} ← ϕ({}",
-                self.phi.var.display_with(self.trans),
-                self.phi.vars[0].display_with(self.trans)
+                "{} ← {}ϕ{}({}",
+                self.phi.var.display_full(
+                    self.trans,
+                    self.keyword_start,
+                    self.keyword_end,
+                    self.location_start,
+                    self.location_end,
+                    self.value_start,
+                    self.value_end,
+                    self.variable_start,
+                    self.variable_end,
+                ),
+                self.keyword_start,
+                self.keyword_end,
+                self.phi.vars[0].display_full(
+                    self.trans,
+                    self.keyword_start,
+                    self.keyword_end,
+                    self.location_start,
+                    self.location_end,
+                    self.value_start,
+                    self.value_end,
+                    self.variable_start,
+                    self.variable_end,
+                ),
             )?;
             for aop in &self.phi.vars[1..] {
-                write!(f, ", {}", aop.display_with(self.trans))?;
+                write!(
+                    f,
+                    ", {}",
+                    aop.display_full(
+                        self.trans,
+                        self.keyword_start,
+                        self.keyword_end,
+                        self.location_start,
+                        self.location_end,
+                        self.value_start,
+                        self.value_end,
+                        self.variable_start,
+                        self.variable_end,
+                    )
+                )?;
             }
             write!(f, ")")?;
         }
@@ -106,10 +166,29 @@ where
 {
     type Target = PhiDisplay<'phi, 'trans, Var>;
 
-    fn display_with(&'phi self, t: Option<&'trans Translator>) -> PhiDisplay<'phi, 'trans, Var> {
+    fn display_full(
+        &'phi self,
+        trans: Option<&'trans Translator>,
+        keyword_start: &'trans str,
+        keyword_end: &'trans str,
+        location_start: &'trans str,
+        location_end: &'trans str,
+        value_start: &'trans str,
+        value_end: &'trans str,
+        variable_start: &'trans str,
+        variable_end: &'trans str,
+    ) -> Self::Target {
         PhiDisplay {
             phi: self,
-            trans: t,
+            trans,
+            keyword_start,
+            keyword_end,
+            location_start,
+            location_end,
+            value_start,
+            value_end,
+            variable_start,
+            variable_end,
         }
     }
 }

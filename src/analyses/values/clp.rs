@@ -1,5 +1,4 @@
 use fugue::bv::BitVec;
-use intervals::Interval;
 
 use std::borrow::Borrow;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
@@ -161,7 +160,7 @@ impl CLP {
         if end < start { // empty
             Self::bottom(bits)
         } else {
-            let cardn = (&end - &start).abs().unsigned_cast(1 + bits);
+            let cardn = (&end - &start).abs().unsigned_cast(1 + bits) + BitVec::one(1 + bits);
             Self::new_with(start, BitVec::one(bits), cardn)
         }
     }
@@ -216,6 +215,39 @@ impl CLP {
         }
     }
 
+    pub fn split_overflow(&self) -> (CLP, CLP) {
+        let curr = self.canonise();
+
+        let lb = curr.base.clone();
+        let ub = curr.finite_end().unwrap();
+
+        if lb < ub {
+            (curr.clone(), CLP::bottom(curr.bits()))
+        } else {
+            let mut max_pm = BitVec::min_value_with(curr.bits(), false).signed();
+            max_pm = (&max_pm - &lb).signed();
+            max_pm = (&max_pm / &curr.step).signed();
+            let max_ps = if max_pm.is_zero() { BitVec::zero(curr.bits()) } else { curr.step.clone() };
+            let p = Self {
+                base: lb.unsigned(),
+                step: max_ps.unsigned(),
+                card: max_pm.unsigned().cast(curr.bits() + 1),
+            };
+
+            let mut min_qm = ub.clone().signed();
+            min_qm = (&min_qm / &curr.step).signed();
+            let min_q = (&ub - &(&curr.step * &min_qm).signed()).signed();
+            let min_qs = if min_qm.is_zero() { BitVec::zero(curr.bits()) } else { curr.step.clone() };
+            let q = Self {
+                base: min_q.unsigned(),
+                step: min_qs.unsigned(),
+                card: min_qm.unsigned().cast(curr.bits() + 1),
+            };
+
+            (p, q)
+        }
+    }
+
     pub fn infinite<U, V>(b: U, s: V) -> Self
     where
         U: Into<BitVec>,
@@ -266,11 +298,16 @@ impl CLP {
         if self.card.is_zero() {
             Self::bottom(sz)
         } else if self.step.is_zero() || self.card.is_one() {
-            Self::new_with(self.base.clone().unsigned(), BitVec::zero(sz), BitVec::one(sz + 1))
+            Self::new_with(self.base.clone(), BitVec::zero(sz), BitVec::one(sz + 1))
         } else if self.card == two {
             let e = &self.base + &self.step;
-            if e >= self.base {
-                self.clone()
+            let base = self.base.clone().unsigned();
+            if e >= base {
+                Self {
+                    base,
+                    step: self.step.clone(),
+                    card: self.card.clone(),
+                }
             } else {
                 Self::new_with(e, -&self.step, two)
             }
@@ -477,10 +514,8 @@ impl CLP {
     }
 
     pub fn translate(&self, bv: &BitVec) -> CLP {
-        let signed = self.base.is_signed() || bv.is_signed();
-        let base = &self.base + bv;
         Self {
-            base: if signed { base.signed() } else { base },
+            base: &self.base + bv,
             step: self.step.clone(),
             card: self.card.clone(),
         }
@@ -534,11 +569,16 @@ impl CLP {
         let mut p1 = self.canonise();
         let mut p2 = other.canonise();
 
+        p1.base = p1.base.unsigned();
+        p2.base = p2.base.unsigned();
+
         if p1.base < p2.base {
             std::mem::swap(&mut p1, &mut p2);
         }
 
         let translation = p1.base.clone();
+
+        println!("trans: {}", translation);
 
         let translated_p1 = p1.translate(&-&p1.base);
         let translated_p2 = p2.translate(&-&p1.base);
@@ -569,6 +609,7 @@ impl CLP {
                     }
                 }
             } else {
+                println!("p2.base: {}", p2.base);
                 let (x, _) = p1.step.diophantine(&p2.step, &p2.base)?;
 
                 let base = &x * &p1.step;
@@ -580,14 +621,15 @@ impl CLP {
                     e1.min(e2)
                 };
 
+
                 if base <= min_e {
                     let card = Self::card_from_bounds(&base, &step, &min_e);
+                    println!("base: {}", base);
                     Some(Self::new_with(base, step, card))
                 } else {
                     None
                 }
             }
-
         }().unwrap_or_else(|| Self::bottom(sz)).translate(&translation)
     }
 
@@ -1525,19 +1567,53 @@ mod test {
 
     #[test]
     fn test_simple() {
-        let mut clp = CLP::top(32);
+        // int arr[4] = { 0, 1, 2, 3 };
+        // int i = top_32;
+        // if (i >= -1 && i <= 3) {
+        //    // ok, in-bounds
+        //    ...
+        // }
 
-        let l = BitVec::from(-10i32).signed();
-        let u = BitVec::from(0x1fi32).signed();
+        let mut i = CLP::top(32);
 
-        let fixed = CLP::range(l, u);
+        let chk1 = CLP::new(BitVec::from(0i32).signed());
+        let chk2 = CLP::new(BitVec::from(3u32));
 
-        clp = clp.intersection(&fixed);
-        clp = clp + CLP::new(20u32);
-        clp = clp * CLP::new(4u32);
-        clp = clp - CLP::new(0xfu32);
+        // signed chk1
+        let chk1_min = chk1.min_elem_signed().unwrap().signed();
+        let chk1_max = BitVec::from(10u32).signed(); //BitVec::max_value_with(32, true).signed();
+        let chk1_rng = CLP::range(chk1_min, chk1_max);
 
-        for v in clp.iter().take(100) {
+        // (1, i32::MAX)
+        // (i32::MIN, 3)
+        //
+        // = (-1, +3)
+
+        i = i.intersection(&chk1_rng);
+
+        //assert_eq!(i, chk1_rng);
+
+        // signed chk2
+        let chk2_min = BitVec::from(-10i32).signed(); //BitVec::min_value_with(32, true).signed();
+        let chk2_max = chk2.max_elem_signed().unwrap().signed();
+        let chk2_rng = CLP::range(chk2_min, chk2_max);
+
+        println!("base: {}, end: {} | ({}, {})", chk1_rng.base, chk1_rng.finite_end().unwrap(), chk1_rng.min_elem().unwrap(), chk1_rng.max_elem().unwrap());
+        println!("base: {}, end: {} | ({}, {})", chk2_rng.base, chk2_rng.finite_end().unwrap(), chk2_rng.min_elem().unwrap(), chk2_rng.max_elem().unwrap());
+
+        let (chk2l, chk2u) = chk2_rng.split_overflow();
+        println!("l: {:?}", chk2l);
+        println!("u: {:?}", chk2u);
+
+        i = i.intersection(&chk2_rng);
+
+        println!("({}, {})", chk2_rng.min_elem_signed().unwrap(), chk2_rng.max_elem_signed().unwrap());
+
+        println!("{:?}", chk1_rng.intersection(&chk2_rng));
+
+        println!("=({}, {})", i.min_elem().unwrap(), i.max_elem().unwrap());
+        //for v in chk1_rng.intersection(&chk2_rng).iter().take(100) {
+        for v in i.iter().take(100) {
             let v = v.signed();
             println!("{} {}", v, v.is_negative());
         }

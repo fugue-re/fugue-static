@@ -4,11 +4,11 @@ use crate::ir::{Expr, Location};
 use crate::models::{Block, Function};
 use crate::types::Id;
 
-use fugue::ir::Translator;
 use fugue::ir::il::traits::*;
+use fugue::ir::Translator;
 
-use hashcons::Term;
 use hashcons::hashconsing::consign;
+use hashcons::Term;
 
 consign! { let TRGT = consign(1024) for BranchTarget; }
 
@@ -67,6 +67,24 @@ impl<'target, 'trans> TranslatorDisplay<'target, 'trans> for BranchTarget {
             translator,
         }
     }
+
+    fn display_full(
+        &'v self,
+        translator: Option<&'t Translator>,
+        branch_start: &'t str,
+        branch_end: &'t str,
+        keyword_start: &'t str,
+        keyword_end: &'t str,
+        location_start: &'t str,
+        location_end: &'t str,
+        type_start: &'t str,
+        type_end: &'t str,
+        value_start: &'t str,
+        value_end: &'t str,
+        variable_start: &'t str,
+        variable_end: &'t str,
+    ) -> Self::Target {
+    }
 }
 
 impl BranchTarget {
@@ -98,5 +116,3 @@ impl From<Location> for Term<BranchTarget> {
         Term::new(&TRGT, BranchTarget::Location(t))
     }
 }
-
-

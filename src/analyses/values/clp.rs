@@ -215,7 +215,9 @@ impl CLP {
         }
     }
 
-    pub fn split_overflow(&self) -> (CLP, CLP) {
+    // See: Executable Analysis using Abstract Interpretation with Circular Linear Progressions, Section 5.
+    // NOTE: we split on unsigned bounds, rather than signed bounds from the paper.
+    pub fn split_unsigned(&self) -> (CLP, CLP) {
         let curr = self.canonise();
 
         let lb = curr.base.clone();
@@ -224,24 +226,31 @@ impl CLP {
         if lb < ub {
             (curr.clone(), CLP::bottom(curr.bits()))
         } else {
-            let mut max_pm = BitVec::min_value_with(curr.bits(), false).signed();
-            max_pm = (&max_pm - &lb).signed();
-            max_pm = (&max_pm / &curr.step).signed();
-            let max_ps = if max_pm.is_zero() { BitVec::zero(curr.bits()) } else { curr.step.clone() };
+            let max_p = BitVec::max_value_with(curr.bits(), false).unsigned();
+
+            let p_upper = &lb + &(&curr.step * &(&max_p - &lb).signed_div(&curr.step));
+            let p_lower = lb;
+
+            let p_card = (&(&p_upper - &p_lower) / &curr.step).cast(curr.bits() + 1) + BitVec::one(curr.bits() + 1);
+            let p_step = curr.step.clone();
+
             let p = Self {
-                base: lb.unsigned(),
-                step: max_ps.unsigned(),
-                card: max_pm.unsigned().cast(curr.bits() + 1),
+                base: p_lower,
+                step: p_step,
+                card: p_card,
             };
 
-            let mut min_qm = ub.clone().signed();
-            min_qm = (&min_qm / &curr.step).signed();
-            let min_q = (&ub - &(&curr.step * &min_qm).signed()).signed();
-            let min_qs = if min_qm.is_zero() { BitVec::zero(curr.bits()) } else { curr.step.clone() };
+            let q_lower = &ub - &(&curr.step * &ub.signed_div(&curr.step));
+            let q_upper = ub;
+
+            let q_card = (&(&q_upper - &q_lower) / &curr.step).cast(curr.bits() + 1) + BitVec::one(curr.bits() + 1);
+
+            let q_step = curr.step.clone();
+
             let q = Self {
-                base: min_q.unsigned(),
-                step: min_qs.unsigned(),
-                card: min_qm.unsigned().cast(curr.bits() + 1),
+                base: q_lower,
+                step: q_step,
+                card: q_card,
             };
 
             (p, q)
@@ -1595,15 +1604,17 @@ mod test {
 
         // signed chk2
         let chk2_min = BitVec::from(-10i32).signed(); //BitVec::min_value_with(32, true).signed();
-        let chk2_max = chk2.max_elem_signed().unwrap().signed();
+        let chk2_max = BitVec::from(3i32); //chk2.max_elem_signed().unwrap().signed();
         let chk2_rng = CLP::range(chk2_min, chk2_max);
 
         println!("base: {}, end: {} | ({}, {})", chk1_rng.base, chk1_rng.finite_end().unwrap(), chk1_rng.min_elem().unwrap(), chk1_rng.max_elem().unwrap());
         println!("base: {}, end: {} | ({}, {})", chk2_rng.base, chk2_rng.finite_end().unwrap(), chk2_rng.min_elem().unwrap(), chk2_rng.max_elem().unwrap());
 
-        let (chk2l, chk2u) = chk2_rng.split_overflow();
+        let (chk2l, chk2u) = chk2_rng.split_unsigned();
         println!("l: {:?}", chk2l);
         println!("u: {:?}", chk2u);
+
+        println!("{:?}", chk2u.union(&chk2l));
 
         i = i.intersection(&chk2_rng);
 

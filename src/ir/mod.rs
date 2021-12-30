@@ -4,6 +4,8 @@ pub use branch::{BranchTarget, BranchTargetFormatter};
 pub mod expr;
 pub use expr::{BinOp, BinRel, Expr, ExprFormatter, UnOp, UnRel};
 
+mod fmt;
+
 pub mod insn;
 pub use insn::{Insn, InsnFormatter};
 

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::{self, Debug, Display};
 
@@ -105,55 +106,29 @@ where
 
 pub struct BlockDisplay<'blk, 'trans, Loc, Val, Var>
 where
-    Loc: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
-    Val: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
-    Var: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Loc: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
+    Val: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
+    Var: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
 {
     blk: &'blk BlockT<Loc, Val, Var>,
-    trans: Option<&'trans Translator>,
-    branch_start: &'trans str,
-    branch_end: &'trans str,
-    keyword_start: &'trans str,
-    keyword_end: &'trans str,
-    location_start: &'trans str,
-    location_end: &'trans str,
-    type_start: &'trans str,
-    type_end: &'trans str,
-    value_start: &'trans str,
-    value_end: &'trans str,
-    variable_start: &'trans str,
-    variable_end: &'trans str,
+    fmt: Cow<'trans, TranslatorFormatter<'trans>>
 }
 
 impl<'blk, 'trans, Loc, Val, Var> Display for BlockDisplay<'blk, 'trans, Loc, Val, Var>
 where
-    Loc: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
-    Val: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
-    Var: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Loc: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
+    Val: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
+    Var: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for phi in self.blk.phis.iter() {
             writeln!(
                 f,
                 "{}{}{} {}",
-                self.location_start,
+                self.fmt.location_start,
                 phi.location(),
-                self.location_end,
-                (**phi.value()).display_full(
-                    self.trans,
-                    self.branch_start,
-                    self.branch_end,
-                    self.keyword_start,
-                    self.keyword_end,
-                    self.location_start,
-                    self.location_end,
-                    self.type_start,
-                    self.type_end,
-                    self.value_start,
-                    self.value_end,
-                    self.variable_start,
-                    self.variable_end,
-                )
+                self.fmt.location_end,
+                (**phi.value()).display_full(Cow::Borrowed(&*self.fmt)),
             )?;
         }
 
@@ -161,24 +136,10 @@ where
             writeln!(
                 f,
                 "{}{}{} {}",
-                self.location_start,
+                self.fmt.location_start,
                 stmt.location(),
-                self.location_end,
-                stmt.display_full(
-                    self.trans,
-                    self.branch_start,
-                    self.branch_end,
-                    self.keyword_start,
-                    self.keyword_end,
-                    self.location_start,
-                    self.location_end,
-                    self.type_start,
-                    self.type_end,
-                    self.value_start,
-                    self.value_end,
-                    self.variable_start,
-                    self.variable_end,
-                )
+                self.fmt.location_end,
+                stmt.display_full(Cow::Borrowed(&*self.fmt)),
             )?
         }
 
@@ -477,43 +438,19 @@ where
 
 impl<'blk, 'trans: 'blk, Loc, Val, Var> TranslatorDisplay<'blk, 'trans> for BlockT<Loc, Val, Var>
 where
-    Loc: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
-    Val: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
-    Var: Clone + TranslatorDisplay<'blk, 'trans> + 'blk,
+    Loc: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
+    Val: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
+    Var: Clone + for<'a> TranslatorDisplay<'blk, 'a> + 'blk,
 {
     type Target = BlockDisplay<'blk, 'trans, Loc, Val, Var>;
 
     fn display_full(
         &'blk self,
-        trans: Option<&'trans Translator>,
-        branch_start: &'trans str,
-        branch_end: &'trans str,
-        keyword_start: &'trans str,
-        keyword_end: &'trans str,
-        location_start: &'trans str,
-        location_end: &'trans str,
-        type_start: &'trans str,
-        type_end: &'trans str,
-        value_start: &'trans str,
-        value_end: &'trans str,
-        variable_start: &'trans str,
-        variable_end: &'trans str,
+        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
     ) -> Self::Target {
         BlockDisplay {
             blk: self,
-            trans,
-            branch_start,
-            branch_end,
-            keyword_start,
-            keyword_end,
-            location_start,
-            location_end,
-            type_start,
-            type_end,
-            value_start,
-            value_end,
-            variable_start,
-            variable_end,
+            fmt,
         }
     }
 }

@@ -1,7 +1,7 @@
 use fugue::ir::il::ecode::{Location, Var};
 use fugue::ir::il::traits::*;
-use fugue::ir::Translator;
 
+use std::borrow::Cow;
 use std::fmt::{self, Display};
 
 use crate::types::{Entity, Located};
@@ -37,24 +37,12 @@ where
 
 pub struct PhiDisplay<'a, 'trans, Var> {
     phi: &'a PhiT<Var>,
-    trans: Option<&'trans Translator>,
-    branch_start: &'trans str,
-    branch_end: &'trans str,
-    keyword_start: &'trans str,
-    keyword_end: &'trans str,
-    location_start: &'trans str,
-    location_end: &'trans str,
-    type_start: &'trans str,
-    type_end: &'trans str,
-    value_start: &'trans str,
-    value_end: &'trans str,
-    variable_start: &'trans str,
-    variable_end: &'trans str,
+    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
 }
 
 impl<'a, 'trans, Var> Display for PhiDisplay<'a, 'trans, Var>
 where
-    Var: TranslatorDisplay<'a, 'trans>,
+    Var: for<'t> TranslatorDisplay<'a, 't>,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.phi.vars.is_empty() {
@@ -62,84 +50,28 @@ where
             write!(
                 f,
                 "{} {}←{} {}ϕ{}(<empty>)",
-                self.phi.var.display_full(
-                    self.trans,
-                    self.branch_start,
-                    self.branch_end,
-                    self.keyword_start,
-                    self.keyword_end,
-                    self.location_start,
-                    self.location_end,
-                    self.type_start,
-                    self.type_end,
-                    self.value_start,
-                    self.value_end,
-                    self.variable_start,
-                    self.variable_end,
-                ),
-                self.keyword_start,
-                self.keyword_end,
-                self.keyword_start,
-                self.keyword_end,
+                self.phi.var.display_full(Cow::Borrowed(&*self.fmt)),
+                self.fmt.keyword_start,
+                self.fmt.keyword_end,
+                self.fmt.keyword_start,
+                self.fmt.keyword_end,
             )?;
         } else {
             write!(
                 f,
                 "{} {}←{} {}ϕ{}({}",
-                self.phi.var.display_full(
-                    self.trans,
-                    self.branch_start,
-                    self.branch_end,
-                    self.keyword_start,
-                    self.keyword_end,
-                    self.location_start,
-                    self.location_end,
-                    self.type_start,
-                    self.type_end,
-                    self.value_start,
-                    self.value_end,
-                    self.variable_start,
-                    self.variable_end,
-                ),
-                self.keyword_start,
-                self.keyword_end,
-                self.keyword_start,
-                self.keyword_end,
-                self.phi.vars[0].display_full(
-                    self.trans,
-                    self.branch_start,
-                    self.branch_end,
-                    self.keyword_start,
-                    self.keyword_end,
-                    self.location_start,
-                    self.location_end,
-                    self.type_start,
-                    self.type_end,
-                    self.value_start,
-                    self.value_end,
-                    self.variable_start,
-                    self.variable_end,
-                ),
+                self.phi.var.display_full(Cow::Borrowed(&*self.fmt)),
+                self.fmt.keyword_start,
+                self.fmt.keyword_end,
+                self.fmt.keyword_start,
+                self.fmt.keyword_end,
+                self.phi.vars[0].display_full(Cow::Borrowed(&*self.fmt)),
             )?;
             for aop in &self.phi.vars[1..] {
                 write!(
                     f,
                     ", {}",
-                    aop.display_full(
-                        self.trans,
-                        self.branch_start,
-                        self.branch_end,
-                        self.keyword_start,
-                        self.keyword_end,
-                        self.location_start,
-                        self.location_end,
-                        self.type_start,
-                        self.type_end,
-                        self.value_start,
-                        self.value_end,
-                        self.variable_start,
-                        self.variable_end,
-                    )
+                    aop.display_full(Cow::Borrowed(&*self.fmt)),
                 )?;
             }
             write!(f, ")")?;
@@ -186,41 +118,17 @@ where
 
 impl<'phi, 'trans, Var> TranslatorDisplay<'phi, 'trans> for PhiT<Var>
 where
-    Var: TranslatorDisplay<'phi, 'trans> + 'phi,
+    Var: for<'a> TranslatorDisplay<'phi, 'a> + 'phi,
 {
     type Target = PhiDisplay<'phi, 'trans, Var>;
 
     fn display_full(
         &'phi self,
-        trans: Option<&'trans Translator>,
-        branch_start: &'trans str,
-        branch_end: &'trans str,
-        keyword_start: &'trans str,
-        keyword_end: &'trans str,
-        location_start: &'trans str,
-        location_end: &'trans str,
-        type_start: &'trans str,
-        type_end: &'trans str,
-        value_start: &'trans str,
-        value_end: &'trans str,
-        variable_start: &'trans str,
-        variable_end: &'trans str,
+        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
     ) -> Self::Target {
         PhiDisplay {
             phi: self,
-            trans,
-            branch_start,
-            branch_end,
-            keyword_start,
-            keyword_end,
-            location_start,
-            location_end,
-            type_start,
-            type_end,
-            value_start,
-            value_end,
-            variable_start,
-            variable_end,
+            fmt,
         }
     }
 }

@@ -24,6 +24,7 @@ pub enum Type {
 
     Pointer(Term<Type>, usize),
     Function(Term<Type>, SmallVec<[Term<Type>; 4]>),
+    Struct(Ustr, SmallVec<[(usize, Term<Type>); 4]>, usize), // name * [(offset * 't)] * bits
     Named(Ustr, usize),
 }
 
@@ -143,11 +144,25 @@ impl Type {
         Self::Function(ret.into(), args.map(|arg| arg.into()).collect()).into()
     }
 
-    pub fn named<N>(name: N, bits: usize) -> Term<Self>
+    pub fn struct_<N, I, T>(name: N, fields: I, bytes: usize) -> Term<Self>
+    where
+        N: Into<Ustr>,
+        I: ExactSizeIterator<Item = (usize, T)>,
+        T: Into<Term<Self>>,
+    {
+        Self::Struct(
+            name.into(),
+            fields.into_iter().map(|(off, t)| (off, t.into())).collect(),
+            bytes * 8,
+        )
+        .into()
+    }
+
+    pub fn named<N>(name: N, bytes: usize) -> Term<Self>
     where
         N: Into<Ustr>,
     {
-        Self::Named(name.into(), bits).into()
+        Self::Named(name.into(), bytes * 8).into()
     }
 }
 
@@ -170,6 +185,7 @@ impl fmt::Display for Type {
                 }
                 write!(f, ") -> {}", typ)
             }
+            Self::Struct(name, _, _) => write!(f, "{}", name),
             Self::Named(name, _) => write!(f, "{}", name),
         }
     }
@@ -184,7 +200,8 @@ impl BitSize for Type {
             Self::Signed(bits)
             | Self::Unsigned(bits)
             | Self::Pointer(_, bits)
-            | Self::Named(_, bits) => *bits,
+            | Self::Struct(_, _, bits) => *bits,
+            Self::Named(_, bits) => *bits,
         }
     }
 }

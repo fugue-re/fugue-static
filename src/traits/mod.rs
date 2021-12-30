@@ -7,6 +7,9 @@ pub use interval::AsInterval;
 pub mod ecode;
 pub use ecode::{ECodeExt, ECodeTarget};
 
+pub mod eval;
+pub use eval::Interpret;
+
 pub mod oracle;
 pub use oracle::{BlockOracle, FunctionOracle};
 

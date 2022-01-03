@@ -1,11 +1,11 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use fugue::ir::{AddressSpaceId, AddressValue, SpaceManager, Translator, VarnodeData};
 use fugue::ir::disassembly::IRBuilderArena;
-use fugue::ir::space_manager::{FromSpace, IntoSpace};
 use fugue::ir::il::pcode::Operand;
 use fugue::ir::il::traits::*;
+use fugue::ir::space_manager::{FromSpace, IntoSpace};
+use fugue::ir::{AddressSpaceId, AddressValue, SpaceManager, VarnodeData};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location {
@@ -19,11 +19,26 @@ impl fmt::Display for Location {
     }
 }
 
-impl<'loc, 'trans> TranslatorDisplay<'loc, 'trans> for Location {
-    type Target = &'loc Self;
+pub struct LocationFormatter<'loc, 'trans> {
+    loc: &'loc Location,
+    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+}
 
-    fn display_with(&'loc self, _translator: Option<&'trans Translator>) -> Self::Target {
-        self
+impl<'loc, 'trans> TranslatorDisplay<'loc, 'trans> for Location {
+    type Target = LocationFormatter<'loc, 'trans>;
+
+    fn display_full(&'loc self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+        LocationFormatter { loc: self, fmt }
+    }
+}
+
+impl<'loc, 'trans> fmt::Display for LocationFormatter<'loc, 'trans> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}{}.{}{}",
+            self.fmt.location_start, self.loc.address, self.loc.position, self.fmt.location_end
+        )
     }
 }
 
@@ -121,7 +136,6 @@ impl<'z> FromSpace<'z, Operand> for Location {
         }
     }
 }
-
 
 impl From<AddressValue> for Location {
     fn from(address: AddressValue) -> Self {

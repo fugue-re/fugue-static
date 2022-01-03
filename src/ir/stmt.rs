@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
@@ -87,63 +88,107 @@ impl<'stmt, 'trans> fmt::Display for StmtFormatter<'stmt, 'trans> {
         match self.stmt {
             Stmt::Assign(dest, src) => write!(
                 f,
-                "{} ← {}",
-                dest.display_with(self.translator.clone()),
-                src.display_with(self.translator.clone())
+                "{} {}←{} {}",
+                dest.display_full(Cow::Borrowed(&*self.fmt)),
+                self.fmt.keyword_start,
+                self.fmt.keyword_end,
+                src.display_full(Cow::Borrowed(&*self.fmt))
             ),
             Stmt::Store(dest, src, size, spc) => {
-                if let Some(trans) = self.translator {
+                if let Some(trans) = self.fmt.translator {
                     let space = trans.manager().unchecked_space_by_id(*spc);
                     write!(
                         f,
-                        "{}[{}]:{} ← {}",
+                        "{}{}{}[{}]:{}{}{} {}←{} {}",
+                        self.fmt.variable_start,
                         space.name(),
-                        dest.display_with(self.translator.clone()),
+                        self.fmt.variable_end,
+                        dest.display_full(Cow::Borrowed(&*self.fmt)),
+                        self.fmt.value_start,
                         size,
-                        src.display_with(self.translator.clone())
+                        self.fmt.value_end,
+                        self.fmt.keyword_start,
+                        self.fmt.keyword_end,
+                        src.display_full(Cow::Borrowed(&*self.fmt))
                     )
                 } else {
                     write!(
                         f,
-                        "space[{}][{}]:{} ← {}",
+                        "{}space{}[{}{}{}][{}]:{}{}{} {}←{} {}",
+                        self.fmt.variable_start,
+                        self.fmt.variable_end,
+                        self.fmt.value_start,
                         spc.index(),
-                        dest.display_with(self.translator.clone()),
+                        self.fmt.value_end,
+                        dest.display_full(Cow::Borrowed(&*self.fmt)),
+                        self.fmt.value_start,
                         size,
-                        src.display_with(self.translator.clone())
+                        self.fmt.value_end,
+                        self.fmt.keyword_start,
+                        self.fmt.keyword_end,
+                        src.display_full(Cow::Borrowed(&*self.fmt))
                     )
                 }
             }
             Stmt::Branch(target) => {
-                write!(f, "goto {}", target.display_with(self.translator.clone()))
+                write!(
+                    f,
+                    "{}goto{} {}",
+                    self.fmt.keyword_start,
+                    self.fmt.keyword_end,
+                    target.display_full(Cow::Borrowed(&*self.fmt)),
+                )
             }
             Stmt::CBranch(cond, target) => write!(
                 f,
-                "goto {} if {}",
-                target.display_with(self.translator.clone()),
-                cond.display_with(self.translator.clone())
+                "{}goto{} {} {}if{} {}",
+                self.fmt.keyword_start,
+                self.fmt.keyword_end,
+                target.display_full(Cow::Borrowed(&*self.fmt)),
+                self.fmt.keyword_start,
+                self.fmt.keyword_end,
+                cond.display_full(Cow::Borrowed(&*self.fmt))
             ),
             Stmt::Call(target, args) => {
                 if !args.is_empty() {
-                    write!(f, "call {}(", target.display_with(self.translator.clone()))?;
-                    write!(f, "{}", args[0].display_with(self.translator.clone()))?;
+                    write!(
+                        f,
+                        "{}call{} {}(",
+                        self.fmt.keyword_start,
+                        self.fmt.keyword_end,
+                        target.display_full(Cow::Borrowed(&*self.fmt))
+                    )?;
+                    write!(f, "{}", args[0].display_full(Cow::Borrowed(&*self.fmt)))?;
                     for arg in &args[1..] {
-                        write!(f, ", {}", arg.display_with(self.translator.clone()))?;
+                        write!(f, ", {}", arg.display_full(Cow::Borrowed(&*self.fmt)))?;
                     }
                     write!(f, ")")
                 } else {
-                    write!(f, "call {}", target.display_with(self.translator.clone()))
+                    write!(
+                        f,
+                        "{}call{} {}",
+                        self.fmt.keyword_start,
+                        self.fmt.keyword_end,
+                        target.display_full(Cow::Borrowed(&*self.fmt))
+                    )
                 }
             }
             Stmt::Return(target) => {
-                write!(f, "return {}", target.display_with(self.translator.clone()))
+                write!(
+                    f,
+                    "{}return{} {}",
+                    self.fmt.keyword_start,
+                    self.fmt.keyword_end,
+                    target.display_full(Cow::Borrowed(&*self.fmt))
+                )
             }
-            Stmt::Skip => write!(f, "skip"),
+            Stmt::Skip => write!(f, "{}skip{}", self.fmt.keyword_start, self.fmt.keyword_end),
             Stmt::Intrinsic(name, args) => {
                 write!(f, "{}(", name)?;
                 if !args.is_empty() {
-                    write!(f, "{}", args[0].display_with(self.translator.clone()))?;
+                    write!(f, "{}", args[0].display_full(Cow::Borrowed(&*self.fmt)))?;
                     for arg in &args[1..] {
-                        write!(f, ", {}", arg.display_with(self.translator.clone()))?;
+                        write!(f, ", {}", arg.display_full(Cow::Borrowed(&*self.fmt)))?;
                     }
                 }
                 write!(f, ")")
@@ -154,19 +199,19 @@ impl<'stmt, 'trans> fmt::Display for StmtFormatter<'stmt, 'trans> {
 
 pub struct StmtFormatter<'stmt, 'trans> {
     stmt: &'stmt Stmt,
-    translator: Option<&'trans Translator>,
+    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
 }
 
 impl<'stmt, 'trans> TranslatorDisplay<'stmt, 'trans> for Stmt {
     type Target = StmtFormatter<'stmt, 'trans>;
 
-    fn display_with(
+    fn display_full(
         &'stmt self,
-        translator: Option<&'trans Translator>,
+        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
     ) -> StmtFormatter<'stmt, 'trans> {
         StmtFormatter {
             stmt: self,
-            translator,
+            fmt,
         }
     }
 }

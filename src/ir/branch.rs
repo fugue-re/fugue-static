@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 
 use crate::ir::{Expr, Location};
@@ -5,7 +6,6 @@ use crate::models::{Block, Function};
 use crate::types::Id;
 
 use fugue::ir::il::traits::*;
-use fugue::ir::Translator;
 
 use hashcons::hashconsing::consign;
 use hashcons::Term;
@@ -33,23 +33,23 @@ impl<'target, 'trans> fmt::Display for BranchTarget {
 
 pub struct BranchTargetFormatter<'target, 'trans> {
     target: &'target BranchTarget,
-    translator: Option<&'trans Translator>,
+    fmt: Cow<'trans, TranslatorFormatter<'trans>>
 }
 
 impl<'target, 'trans> fmt::Display for BranchTargetFormatter<'target, 'trans> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.target {
             BranchTarget::Block(id) => {
-                write!(f, "{}", id)
+                write!(f, "<blk: {}>", id.uuid())
             }
             BranchTarget::Function(id) => {
-                write!(f, "{}", id)
+                write!(f, "<fcn: {}>", id.uuid())
             }
             BranchTarget::Location(loc) => {
-                write!(f, "{}", loc.display_with(self.translator.clone()))
+                write!(f, "{}", loc.display_full(Cow::Borrowed(&*self.fmt)))
             }
             BranchTarget::Computed(expr) => {
-                write!(f, "{}", expr.display_with(self.translator.clone()))
+                write!(f, "{}", expr.display_full(Cow::Borrowed(&*self.fmt)))
             }
         }
     }
@@ -58,32 +58,14 @@ impl<'target, 'trans> fmt::Display for BranchTargetFormatter<'target, 'trans> {
 impl<'target, 'trans> TranslatorDisplay<'target, 'trans> for BranchTarget {
     type Target = BranchTargetFormatter<'target, 'trans>;
 
-    fn display_with(
+    fn display_full(
         &'target self,
-        translator: Option<&'trans Translator>,
-    ) -> BranchTargetFormatter<'target, 'trans> {
+        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
+    ) -> Self::Target {
         BranchTargetFormatter {
             target: self,
-            translator,
+            fmt,
         }
-    }
-
-    fn display_full(
-        &'v self,
-        translator: Option<&'t Translator>,
-        branch_start: &'t str,
-        branch_end: &'t str,
-        keyword_start: &'t str,
-        keyword_end: &'t str,
-        location_start: &'t str,
-        location_end: &'t str,
-        type_start: &'t str,
-        type_end: &'t str,
-        value_start: &'t str,
-        value_end: &'t str,
-        variable_start: &'t str,
-        variable_end: &'t str,
-    ) -> Self::Target {
     }
 }
 

@@ -1,6 +1,7 @@
+use std::borrow::Cow;
 use std::fmt;
 
-use fugue::ir::{AddressSpaceId, Translator, VarnodeData};
+use fugue::ir::{AddressSpaceId, VarnodeData};
 use fugue::ir::disassembly::IRBuilderArena;
 use fugue::ir::il::pcode::Operand;
 use fugue::ir::il::traits::*;
@@ -77,21 +78,36 @@ impl fmt::Display for Var {
 
 impl<'var, 'trans> fmt::Display for VarFormatter<'var, 'trans> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(trans) = self.translator {
+        if let Some(trans) = self.fmt.translator {
             let space = trans.manager().unchecked_space_by_id(self.var.space());
             if space.is_register() {
                 let name = trans
                     .registers()
                     .get(self.var.offset(), self.var.bits() / 8)
                     .unwrap();
-                write!(f, "{}.{}:{}", name, self.var.generation(), self.var.bits())
+                write!(
+                    f,
+                    "{}{}{}.{}{}{}:{}{}{}",
+                    self.fmt.variable_start,
+                    name,
+                    self.fmt.variable_end,
+                    self.fmt.value_start,
+                    self.var.generation(),
+                    self.fmt.value_end,
+                    self.fmt.value_start,
+                    self.var.bits(),
+                    self.fmt.value_end,
+                )
             } else {
                 let off = self.var.offset();
                 let sig = (off as i64).signum() as i128;
                 write!(
                     f,
-                    "{}[{}{:#x}].{}:{}",
+                    "{}{}{}[{}{}{}{}{:#x}{}].{}{}{}:{}{}{}",
+                    self.fmt.variable_start,
                     space.name(),
+                    self.fmt.variable_end,
+                    self.fmt.keyword_start,
                     if sig == 0 {
                         ""
                     } else if sig > 0 {
@@ -99,9 +115,16 @@ impl<'var, 'trans> fmt::Display for VarFormatter<'var, 'trans> {
                     } else {
                         "-"
                     },
+                    self.fmt.keyword_end,
+                    self.fmt.value_start,
                     self.var.offset() as i64 as i128 * sig,
+                    self.fmt.value_end,
+                    self.fmt.value_start,
                     self.var.generation(),
-                    self.var.bits()
+                    self.fmt.value_end,
+                    self.fmt.value_start,
+                    self.var.bits(),
+                    self.fmt.value_end,
                 )
             }
         } else {
@@ -112,19 +135,19 @@ impl<'var, 'trans> fmt::Display for VarFormatter<'var, 'trans> {
 
 pub struct VarFormatter<'var, 'trans> {
     var: &'var Var,
-    translator: Option<&'trans Translator>,
+    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
 }
 
 impl<'var, 'trans> TranslatorDisplay<'var, 'trans> for Var {
     type Target = VarFormatter<'var, 'trans>;
 
-    fn display_with(
+    fn display_full(
         &'var self,
-        translator: Option<&'trans Translator>,
+        fmt: Cow<'trans, TranslatorFormatter<'trans>>,
     ) -> VarFormatter<'var, 'trans> {
         VarFormatter {
             var: self,
-            translator,
+            fmt,
         }
     }
 }

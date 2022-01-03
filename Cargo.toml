@@ -8,6 +8,7 @@ edition = "2018"
 bincode = "1"
 educe = "0.4"
 egg = "0.7"
+ena = "0.14"
 env_logger = "0.9"
 hashcons = { version = "0.1", registry = "fugue" }
 indexmap = "1.7"

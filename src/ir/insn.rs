@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 
 use fugue::ir::address::AddressValue;
@@ -89,16 +90,6 @@ impl Insn {
     pub fn length(&self) -> usize {
         self.length
     }
-
-    pub fn display<'ecode, 'trans>(
-        &'ecode self,
-        translator: &'trans Translator,
-    ) -> InsnFormatter<'ecode, 'trans> {
-        InsnFormatter {
-            ecode: self,
-            translator,
-        }
-    }
 }
 
 impl Insn {
@@ -142,7 +133,7 @@ impl fmt::Display for Insn {
 
 pub struct InsnFormatter<'ecode, 'trans> {
     ecode: &'ecode Insn,
-    translator: &'trans Translator,
+    fmt: Cow<'trans, TranslatorFormatter<'trans>>,
 }
 
 impl<'ecode, 'trans> fmt::Display for InsnFormatter<'ecode, 'trans> {
@@ -155,7 +146,7 @@ impl<'ecode, 'trans> fmt::Display for InsnFormatter<'ecode, 'trans> {
                     "{}.{:02}: {}{}",
                     self.ecode.address,
                     i,
-                    op.display_with(Some(self.translator)),
+                    op.display_full(Cow::Borrowed(&*self.fmt)),
                     if i == len - 1 { "" } else { "\n" }
                 )?;
             }
@@ -163,5 +154,13 @@ impl<'ecode, 'trans> fmt::Display for InsnFormatter<'ecode, 'trans> {
         } else {
             write!(f, "{}.00: skip", self.ecode.address)
         }
+    }
+}
+
+impl<'ecode, 'trans> TranslatorDisplay<'ecode, 'trans> for Insn {
+    type Target = InsnFormatter<'ecode, 'trans>;
+
+    fn display_full(&'ecode self, fmt: Cow<'trans, TranslatorFormatter<'trans>>) -> Self::Target {
+        InsnFormatter { ecode: self, fmt }
     }
 }

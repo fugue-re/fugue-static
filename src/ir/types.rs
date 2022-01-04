@@ -1,5 +1,6 @@
+use std::borrow::Borrow;
 use std::fmt;
-use std::sync::Arc;
+use std::ops::Deref;
 
 use fugue::ir::float_format::FloatFormat;
 use fugue::ir::il::traits::*;
@@ -10,7 +11,34 @@ use hashcons::Term;
 use smallvec::SmallVec;
 use ustr::Ustr;
 
+use crate::ir::Expr;
+
 consign! { let TYPE = consign(1024) for Type; }
+consign! { let FFMT = consign(1024) for FloatFormat; }
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct FloatKind(Term<FloatFormat>);
+
+impl Borrow<FloatFormat> for FloatKind {
+    fn borrow(&self) -> &FloatFormat {
+        &*self.0
+    }
+}
+
+impl Borrow<FloatFormat> for &'_ FloatKind {
+    fn borrow(&self) -> &FloatFormat {
+        &*self.0
+    }
+}
+
+impl Deref for FloatKind {
+    type Target = FloatFormat;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Type {
@@ -20,7 +48,7 @@ pub enum Type {
     Signed(usize),   // sign-extension
     Unsigned(usize), // zero-extension
 
-    Float(Arc<FloatFormat>), // T -> FloatFormat::T
+    Float(FloatKind), // T -> FloatFormat::T
 
     Pointer(Term<Type>, usize),
     Function(Term<Type>, SmallVec<[Term<Type>; 4]>),
@@ -34,7 +62,30 @@ impl From<Type> for Term<Type> {
     }
 }
 
+impl From<FloatFormat> for FloatKind {
+    fn from(c: FloatFormat) -> Self {
+        Self(Term::new(&FFMT, c))
+    }
+}
+
 impl Type {
+    pub fn apply<E>(&self, e: E) -> Term<Expr>
+    where
+        E: Into<Term<Expr>>,
+    {
+        let e = e.into();
+
+        match self {
+            Self::Bool => Expr::cast_bool(e),
+            Self::Signed(bits) => Expr::cast_signed(e, *bits),
+            Self::Unsigned(bits) => Expr::cast_unsigned(e, *bits),
+            Self::Pointer(_, bits) => {
+                Expr::Cast(Expr::cast_unsigned(e, *bits), self.clone().into()).into()
+            }
+            _ => Expr::Cast(e, self.clone().into()).into(),
+        }
+    }
+
     pub fn is_void(&self) -> bool {
         matches!(self, Self::Void)
     }
@@ -67,8 +118,11 @@ impl Type {
         matches!(self, Self::Float(f) if f.bits() == bits)
     }
 
-    pub fn is_float_format(&self, fmt: &FloatFormat) -> bool {
-        matches!(self, Self::Float(f) if &**f == fmt)
+    pub fn is_float_kind<F>(&self, fmt: F) -> bool
+    where
+        F: Borrow<FloatFormat>,
+    {
+        matches!(self, Self::Float(f) if &**f == fmt.borrow())
     }
 
     pub fn is_pointer(&self) -> bool {
@@ -124,8 +178,11 @@ impl Type {
         Self::Unsigned(bits).into()
     }
 
-    pub fn float(fmt: Arc<FloatFormat>) -> Term<Self> {
-        Self::Float(fmt).into()
+    pub fn float<K>(fmt: K) -> Term<Self>
+    where
+        K: Into<FloatKind>,
+    {
+        Self::Float(fmt.into()).into()
     }
 
     pub fn pointer<T>(t: T, bits: usize) -> Term<Self>

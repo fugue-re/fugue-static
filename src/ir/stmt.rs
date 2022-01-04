@@ -5,9 +5,8 @@ use std::sync::Arc;
 use fugue::bv::BitVec;
 use fugue::ir::address::AddressValue;
 use fugue::ir::disassembly::{ArenaVec, Opcode, VarnodeData};
-use fugue::ir::float_format::FloatFormat;
-use fugue::ir::il::traits::*;
 use fugue::ir::il::pcode::PCodeOp;
+use fugue::ir::il::traits::*;
 use fugue::ir::space::{AddressSpace, AddressSpaceId};
 use fugue::ir::space_manager::{FromSpace, IntoSpace, SpaceManager};
 use fugue::ir::Translator;
@@ -19,7 +18,7 @@ use fnv::FnvHashMap as Map;
 use smallvec::SmallVec;
 use ustr::Ustr;
 
-use crate::ir::{BranchTarget, Expr, Location, Type, UnOp, Var};
+use crate::ir::{BranchTarget, Expr, FloatKind, Location, Type, UnOp, Var};
 
 consign! { let STMT = consign(1024) for Stmt; }
 
@@ -209,17 +208,14 @@ impl<'stmt, 'trans> TranslatorDisplay<'stmt, 'trans> for Stmt {
         &'stmt self,
         fmt: Cow<'trans, TranslatorFormatter<'trans>>,
     ) -> StmtFormatter<'stmt, 'trans> {
-        StmtFormatter {
-            stmt: self,
-            fmt,
-        }
+        StmtFormatter { stmt: self, fmt }
     }
 }
 
 impl Stmt {
     pub fn from_parts<'a>(
         manager: &SpaceManager,
-        float_formats: &Map<usize, Arc<FloatFormat>>,
+        float_formats: &Map<usize, FloatKind>,
         user_ops: &[Arc<str>],
         address: &AddressValue,
         position: usize,
@@ -875,12 +871,14 @@ impl Stmt {
     }
 
     pub fn is_branch(&self) -> bool {
-        matches!(self,
-                 Stmt::Branch(_) |
-                 Stmt::CBranch(_, _) |
-                 Stmt::Call(_, _) |
-                 Stmt::Intrinsic(_, _) |
-                 Stmt::Return(_))
+        matches!(
+            self,
+            Stmt::Branch(_)
+                | Stmt::CBranch(_, _)
+                | Stmt::Call(_, _)
+                | Stmt::Intrinsic(_, _)
+                | Stmt::Return(_)
+        )
     }
 
     pub fn is_jump(&self) -> bool {
@@ -918,7 +916,11 @@ impl Stmt {
         position: usize,
     ) -> Term<Self> {
         let manager = translator.manager();
-        let formats = translator.float_formats();
+        let formats = translator
+            .float_formats()
+            .iter()
+            .map(|(sz, fmt)| (*sz, (**fmt).clone().into()))
+            .collect();
 
         match pcode {
             PCodeOp::Copy {

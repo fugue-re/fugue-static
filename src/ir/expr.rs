@@ -1,6 +1,5 @@
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::fmt;
-use std::sync::Arc;
 
 use fugue::bv::BitVec;
 use fugue::ir::disassembly::{IRBuilderArena, VarnodeData};
@@ -17,7 +16,7 @@ use fnv::FnvHashMap as Map;
 use smallvec::SmallVec;
 use ustr::Ustr;
 
-use crate::ir::{BranchTarget, Type, Var};
+use crate::ir::{BranchTarget, FloatKind, Type, Var};
 
 consign! { let EXPR = consign(1024) for Expr; }
 
@@ -109,21 +108,21 @@ impl BinOp {
 
         match self {
             Self::AND => {
-                if l.is_bool() {
+                if l.is_bool() || r.is_bool() {
                     Expr::bool_and(l, r)
                 } else {
                     Expr::int_and(l, r)
                 }
             }
             Self::OR => {
-                if l.is_bool() {
+                if l.is_bool() || r.is_bool() {
                     Expr::bool_or(l, r)
                 } else {
                     Expr::int_or(l, r)
                 }
             }
             Self::XOR => {
-                if l.is_bool() {
+                if l.is_bool() || r.is_bool() {
                     Expr::bool_xor(l, r)
                 } else {
                     Expr::int_xor(l, r)
@@ -985,7 +984,7 @@ impl Expr {
         }
     }
 
-    fn float_kind(&self) -> Option<Arc<FloatFormat>> {
+    fn float_kind(&self) -> Option<FloatKind> {
         match self {
             Expr::BinOp(_, e, _) | Expr::UnOp(_, e) | Expr::IfElse(_, e, _) => e.float_kind(),
             Expr::Cast(_, t) => {
@@ -1000,19 +999,23 @@ impl Expr {
     }
 
     pub fn is_signed(&self) -> bool {
-        self.is_cast_kind_aux_op(Type::is_signed)
+        self.is_cast_kind_aux_op(Type::is_signed) || matches!(self, Expr::Val(bv) if bv.is_signed())
     }
 
     pub fn is_signed_bits(&self, bits: usize) -> bool {
         self.is_cast_kind_aux_op(|s| s.is_signed_with(bits))
+            || matches!(self, Expr::Val(bv) if bv.is_signed() && bv.bits() == bits)
     }
 
     pub fn is_float(&self) -> bool {
         self.is_cast_kind_aux_op(Type::is_float)
     }
 
-    pub fn is_float_format(&self, format: &FloatFormat) -> bool {
-        self.is_cast_kind_aux_op(|f| f.is_float_format(format))
+    pub fn is_float_kind<F>(&self, format: F) -> bool
+    where
+        F: Borrow<FloatFormat>,
+    {
+        self.is_cast_kind_aux_op(|f| f.is_float_kind(format.borrow()))
     }
 
     pub fn is_unsigned(&self) -> bool {
@@ -1020,6 +1023,7 @@ impl Expr {
             Expr::BinRel(_, _, _) | Expr::UnRel(_, _) => false,
             Expr::Cast(_, t) => matches!(**t, Type::Unsigned(_) | Type::Pointer(_, _)),
             Expr::UnOp(_, e) | Expr::BinOp(_, e, _) | Expr::IfElse(_, e, _) => e.is_unsigned(),
+            Expr::Val(bv) => !bv.is_signed(),
             _ => true,
         }
     }
@@ -1031,6 +1035,7 @@ impl Expr {
             Expr::UnOp(_, e) | Expr::BinOp(_, e, _) | Expr::IfElse(_, e, _) => {
                 e.is_unsigned() && e.bits() == bits
             }
+            Expr::Val(bv) => !bv.is_signed() && bv.bits() == bits,
             e => e.bits() == bits,
         }
     }
@@ -1048,7 +1053,10 @@ impl Expr {
         E: Into<Term<Self>>,
     {
         let expr = expr.into();
-        if expr.is_bool() {
+
+        if let Self::Val(bv) = &*expr {
+            Self::val(if bv.is_zero() { BitVec::one(8) } else { BitVec::zero(8) })
+        } else if expr.is_bool() {
             expr
         } else {
             Self::Cast(expr.into(), Type::bool()).into()
@@ -1060,7 +1068,9 @@ impl Expr {
         E: Into<Term<Self>>,
     {
         let expr = expr.into();
-        if expr.is_signed_bits(bits) {
+        if let Self::Val(bv) = &*expr {
+            Self::val(bv.signed_cast(bits))
+        } else if expr.is_signed_bits(bits) {
             expr
         } else {
             Self::Cast(expr.into(), Type::signed(bits)).into()
@@ -1072,22 +1082,26 @@ impl Expr {
         E: Into<Term<Self>>,
     {
         let expr = expr.into();
-        if expr.is_unsigned_bits(bits) {
+        if let Self::Val(bv) = &*expr {
+            Self::val(bv.unsigned_cast(bits))
+        } else if expr.is_unsigned_bits(bits) {
             expr
         } else {
             Self::Cast(expr.into(), Type::unsigned(bits)).into()
         }
     }
 
-    pub fn cast_float<E>(expr: E, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn cast_float<E, K>(expr: E, format: K) -> Term<Self>
     where
         E: Into<Term<Self>>,
+        K: Into<FloatKind>,
     {
         let expr = expr.into();
-        if expr.is_float_format(&*format) {
+        let kind = format.into();
+        if expr.is_float_kind(&*kind) {
             expr
         } else {
-            Self::Cast(expr.into(), Type::float(format)).into()
+            Self::Cast(expr.into(), Type::float(kind)).into()
         }
     }
 
@@ -1255,7 +1269,7 @@ impl Expr {
         op: BinOp,
         expr1: E1,
         expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
+        formats: &Map<usize, FloatKind>,
     ) -> Term<Self>
     where
         E1: Into<Term<Self>>,
@@ -1274,7 +1288,7 @@ impl Expr {
         op: BinOp,
         expr1: E1,
         expr2: E2,
-        format: Arc<FloatFormat>,
+        format: FloatKind,
     ) -> Term<Self>
     where
         E1: Into<Term<Self>>,
@@ -1327,7 +1341,7 @@ impl Expr {
         op: BinRel,
         expr1: E1,
         expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
+        formats: &Map<usize, FloatKind>,
     ) -> Term<Self>
     where
         E1: Into<Term<Self>>,
@@ -1489,7 +1503,7 @@ impl Expr {
         Self::binary_op_promote_bool(BinOp::XOR, expr1, expr2)
     }
 
-    pub fn float_nan<E>(expr: E, formats: &Map<usize, Arc<FloatFormat>>) -> Term<Self>
+    pub fn float_nan<E>(expr: E, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E: Into<Term<Self>>,
     {
@@ -1504,7 +1518,7 @@ impl Expr {
         )
     }
 
-    pub fn float_neg<E>(expr: E, formats: &Map<usize, Arc<FloatFormat>>) -> Term<Self>
+    pub fn float_neg<E>(expr: E, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E: Into<Term<Self>>,
     {
@@ -1518,22 +1532,25 @@ impl Expr {
         )
     }
 
-    pub fn float_neg_with<E>(expr: E, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_neg_with<E, K>(expr: E, kind: K) -> Term<Self>
     where
         E: Into<Term<Self>>,
+        K: Into<FloatKind>,
     {
         let expr = expr.into();
+        let kind = kind.into();
+
         Self::unary_op(
             UnOp::NEG,
-            if expr.is_float_format(&*format) {
+            if expr.is_float_kind(&*kind) {
                 expr
             } else {
-                Expr::cast_float(Expr::cast_signed(expr, format.bits()), format)
+                Expr::cast_float(Expr::cast_signed(expr, kind.bits()), kind)
             },
         )
     }
 
-    pub fn float_abs<E>(expr: E, formats: &Map<usize, Arc<FloatFormat>>) -> Term<Self>
+    pub fn float_abs<E>(expr: E, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E: Into<Term<Self>>,
     {
@@ -1547,22 +1564,24 @@ impl Expr {
         )
     }
 
-    pub fn float_abs_with<E>(expr: E, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_abs_with<E, K>(expr: E, format: K) -> Term<Self>
     where
         E: Into<Term<Self>>,
+        K: Into<FloatKind>,
     {
         let expr = expr.into();
+        let kind = format.into();
         Self::unary_op(
             UnOp::ABS,
-            if expr.is_float_format(&*format) {
+            if expr.is_float_kind(&*kind) {
                 expr
             } else {
-                Expr::cast_float(Expr::cast_signed(expr, format.bits()), format)
+                Expr::cast_float(Expr::cast_signed(expr, kind.bits()), kind)
             },
         )
     }
 
-    pub fn float_sqrt<E>(expr: E, formats: &Map<usize, Arc<FloatFormat>>) -> Term<Self>
+    pub fn float_sqrt<E>(expr: E, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E: Into<Term<Self>>,
     {
@@ -1576,22 +1595,24 @@ impl Expr {
         )
     }
 
-    pub fn float_sqrt_with<E>(expr: E, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_sqrt_with<E, K>(expr: E, format: K) -> Term<Self>
     where
         E: Into<Term<Self>>,
+        K: Into<FloatKind>,
     {
         let expr = expr.into();
+        let kind = format.into();
         Self::unary_op(
             UnOp::SQRT,
-            if expr.is_float_format(&*format) {
+            if expr.is_float_kind(&*kind) {
                 expr
             } else {
-                Expr::cast_float(Expr::cast_signed(expr, format.bits()), format)
+                Expr::cast_float(Expr::cast_signed(expr, kind.bits()), kind)
             },
         )
     }
 
-    pub fn float_ceiling<E>(expr: E, formats: &Map<usize, Arc<FloatFormat>>) -> Term<Self>
+    pub fn float_ceiling<E>(expr: E, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E: Into<Term<Self>>,
     {
@@ -1605,22 +1626,24 @@ impl Expr {
         )
     }
 
-    pub fn float_ceiling_with<E>(expr: E, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_ceiling_with<E, K>(expr: E, format: K) -> Term<Self>
     where
         E: Into<Term<Self>>,
+        K: Into<FloatKind>,
     {
         let expr = expr.into();
+        let kind = format.into();
         Self::unary_op(
             UnOp::CEILING,
-            if expr.is_float_format(&*format) {
+            if expr.is_float_kind(&*kind) {
                 expr
             } else {
-                Expr::cast_float(Expr::cast_signed(expr, format.bits()), format)
+                Expr::cast_float(Expr::cast_signed(expr, kind.bits()), kind)
             },
         )
     }
 
-    pub fn float_round<E>(expr: E, formats: &Map<usize, Arc<FloatFormat>>) -> Term<Self>
+    pub fn float_round<E>(expr: E, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E: Into<Term<Self>>,
     {
@@ -1634,22 +1657,24 @@ impl Expr {
         )
     }
 
-    pub fn float_round_with<E>(expr: E, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_round_with<E, K>(expr: E, format: K) -> Term<Self>
     where
         E: Into<Term<Self>>,
+        K: Into<FloatKind>,
     {
         let expr = expr.into();
+        let kind = format.into();
         Self::unary_op(
             UnOp::ROUND,
-            if expr.is_float_format(&*format) {
+            if expr.is_float_kind(&*kind) {
                 expr
             } else {
-                Expr::cast_float(Expr::cast_signed(expr, format.bits()), format)
+                Expr::cast_float(Expr::cast_signed(expr, kind.bits()), kind)
             },
         )
     }
 
-    pub fn float_floor<E>(expr: E, formats: &Map<usize, Arc<FloatFormat>>) -> Term<Self>
+    pub fn float_floor<E>(expr: E, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E: Into<Term<Self>>,
     {
@@ -1663,26 +1688,24 @@ impl Expr {
         )
     }
 
-    pub fn float_floor_with<E>(expr: E, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_floor_with<E, K>(expr: E, format: K) -> Term<Self>
     where
         E: Into<Term<Self>>,
+        K: Into<FloatKind>,
     {
         let expr = expr.into();
+        let kind = format.into();
         Self::unary_op(
             UnOp::FLOOR,
-            if expr.is_float_format(&*format) {
+            if expr.is_float_kind(&*kind) {
                 expr
             } else {
-                Expr::cast_float(Expr::cast_signed(expr, format.bits()), format)
+                Expr::cast_float(Expr::cast_signed(expr, kind.bits()), kind)
             },
         )
     }
 
-    pub fn float_eq<E1, E2>(
-        expr1: E1,
-        expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
-    ) -> Term<Self>
+    pub fn float_eq<E1, E2>(expr1: E1, expr2: E2, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1690,11 +1713,7 @@ impl Expr {
         Self::binary_rel_promote_float(BinRel::EQ, expr1, expr2, formats)
     }
 
-    pub fn float_neq<E1, E2>(
-        expr1: E1,
-        expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
-    ) -> Term<Self>
+    pub fn float_neq<E1, E2>(expr1: E1, expr2: E2, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1702,11 +1721,7 @@ impl Expr {
         Self::binary_rel_promote_float(BinRel::NEQ, expr1, expr2, formats)
     }
 
-    pub fn float_lt<E1, E2>(
-        expr1: E1,
-        expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
-    ) -> Term<Self>
+    pub fn float_lt<E1, E2>(expr1: E1, expr2: E2, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1714,11 +1729,7 @@ impl Expr {
         Self::binary_rel_promote_float(BinRel::LT, expr1, expr2, formats)
     }
 
-    pub fn float_le<E1, E2>(
-        expr1: E1,
-        expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
-    ) -> Term<Self>
+    pub fn float_le<E1, E2>(expr1: E1, expr2: E2, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1726,11 +1737,7 @@ impl Expr {
         Self::binary_rel_promote_float(BinRel::LE, expr1, expr2, formats)
     }
 
-    pub fn float_add<E1, E2>(
-        expr1: E1,
-        expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
-    ) -> Term<Self>
+    pub fn float_add<E1, E2>(expr1: E1, expr2: E2, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1738,11 +1745,7 @@ impl Expr {
         Self::binary_op_promote_float(BinOp::ADD, expr1, expr2, formats)
     }
 
-    pub fn float_sub<E1, E2>(
-        expr1: E1,
-        expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
-    ) -> Term<Self>
+    pub fn float_sub<E1, E2>(expr1: E1, expr2: E2, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1750,11 +1753,7 @@ impl Expr {
         Self::binary_op_promote_float(BinOp::SUB, expr1, expr2, formats)
     }
 
-    pub fn float_div<E1, E2>(
-        expr1: E1,
-        expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
-    ) -> Term<Self>
+    pub fn float_div<E1, E2>(expr1: E1, expr2: E2, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1762,11 +1761,7 @@ impl Expr {
         Self::binary_op_promote_float(BinOp::DIV, expr1, expr2, formats)
     }
 
-    pub fn float_mul<E1, E2>(
-        expr1: E1,
-        expr2: E2,
-        formats: &Map<usize, Arc<FloatFormat>>,
-    ) -> Term<Self>
+    pub fn float_mul<E1, E2>(expr1: E1, expr2: E2, formats: &Map<usize, FloatKind>) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1774,7 +1769,7 @@ impl Expr {
         Self::binary_op_promote_float(BinOp::MUL, expr1, expr2, formats)
     }
 
-    pub fn float_add_with<E1, E2>(expr1: E1, expr2: E2, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_add_with<E1, E2>(expr1: E1, expr2: E2, format: FloatKind) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1782,7 +1777,7 @@ impl Expr {
         Self::binary_op_promote_float_with(BinOp::ADD, expr1, expr2, format)
     }
 
-    pub fn float_sub_with<E1, E2>(expr1: E1, expr2: E2, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_sub_with<E1, E2>(expr1: E1, expr2: E2, format: FloatKind) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1790,7 +1785,7 @@ impl Expr {
         Self::binary_op_promote_float_with(BinOp::SUB, expr1, expr2, format)
     }
 
-    pub fn float_div_with<E1, E2>(expr1: E1, expr2: E2, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_div_with<E1, E2>(expr1: E1, expr2: E2, format: FloatKind) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -1798,7 +1793,7 @@ impl Expr {
         Self::binary_op_promote_float_with(BinOp::DIV, expr1, expr2, format)
     }
 
-    pub fn float_mul_with<E1, E2>(expr1: E1, expr2: E2, format: Arc<FloatFormat>) -> Term<Self>
+    pub fn float_mul_with<E1, E2>(expr1: E1, expr2: E2, format: FloatKind) -> Term<Self>
     where
         E1: Into<Term<Self>>,
         E2: Into<Term<Self>>,
@@ -2222,6 +2217,10 @@ impl Expr {
     // order over expressions, we can enforce the form Var + Val.
     pub fn canonical(&self) -> Term<Self> {
         match self {
+            Self::Cast(e, c) => {
+                let ex = e.canonical();
+                c.apply(ex)
+            },
             Self::BinOp(op, l, r) => {
                 let lx = l.canonical();
                 let rx = r.canonical();
@@ -2254,18 +2253,18 @@ mod test {
 
         let x = Expr::int_add(
             Expr::int_add(
-                Expr::val(10u32),
+                Expr::val(10u64),
                 Expr::int_mul(
                     Expr::int_add(Expr::val(99u32), Expr::val(1u32)),
                     Expr::var(Var::new(&spc, 0, 32, 0)),
                 ),
             ),
             Expr::int_add(
-                Expr::int_add(
-                    Expr::val(44u32),
+                Expr::concat(
                     Expr::int_mul(Expr::var(Var::new(&spc, 4, 32, 0)), Expr::val(0u32)),
+                    Expr::val(44u32),
                 ),
-                Expr::val(32u32),
+                Expr::cast_unsigned(Expr::val(32u32), 64),
             ),
         )
         .canonical();
@@ -2282,8 +2281,8 @@ mod test {
         assert_eq!(
             x,
             Expr::int_add(
-                Expr::int_mul(Expr::var(Var::new(&spc, 0, 32, 0)), Expr::val(100u32)),
-                Expr::val(86u32),
+                Expr::cast_unsigned(Expr::int_mul(Expr::var(Var::new(&spc, 0, 32, 0)), Expr::val(100u32)), 64),
+                Expr::val(86u64),
             ),
         );
         assert_eq!(y, Expr::val(185u32),);

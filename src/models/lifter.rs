@@ -9,9 +9,12 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use fnv::FnvHashMap;
+
 use thiserror::Error;
 
 use crate::models::Block;
+use crate::ir::FloatKind;
 use crate::traits::ecode::*;
 use crate::traits::stmt::*;
 use crate::types::{
@@ -102,6 +105,8 @@ pub struct Lifter {
     register_space: AddressSpaceId,
     register_index: VarView,
 
+    float_kinds: FnvHashMap<usize, FloatKind>,
+
     global_space: AddressSpaceId,
     stack_space: AddressSpaceId,
     temporary_space: AddressSpaceId,
@@ -149,11 +154,17 @@ impl Lifter {
             0,
         );
 
+        let float_kinds = translator.float_formats()
+            .iter()
+            .map(|(sz, fmt)| (*sz, (**fmt).clone().into()))
+            .collect();
+
         Self {
             translator,
             convention,
             register_space,
             register_index,
+            float_kinds,
             global_space,
             stack_space,
             temporary_space,
@@ -168,6 +179,10 @@ impl Lifter {
 
     pub fn stack_pointer(&self) -> Var {
         self.stack_pointer
+    }
+
+    pub fn float_kind(&self, bits: usize) -> Option<&FloatKind> {
+        self.float_kinds.get(&bits)
     }
 
     pub fn convention(&self) -> &Convention {

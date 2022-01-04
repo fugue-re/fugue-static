@@ -8,11 +8,12 @@ use fugue::ir::il::pcode::PCode;
 use fugue::ir::il::traits::*;
 use fugue::ir::Translator;
 
+use fnv::FnvHashMap as Map;
 use hashcons::Term;
 
 use smallvec::{smallvec, SmallVec};
 
-use crate::ir::Stmt;
+use crate::ir::{FloatKind, Stmt};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Insn {
@@ -25,6 +26,7 @@ pub struct Insn {
 impl Insn {
     pub fn lift(
         t: &Translator,
+        ffs: &Map<usize, FloatKind>,
         irb: &mut IRBuilderArena,
         ctx: &mut ContextDatabase,
         addr: u64,
@@ -34,7 +36,6 @@ impl Insn {
         let raw = t.lift_pcode_raw(ctx, irb, addr, bytes)?;
 
         let manager = t.manager();
-        let float_formats = t.float_formats();
         let user_ops = t.user_ops();
         let address = raw.address;
 
@@ -46,7 +47,7 @@ impl Insn {
                 .map(|(i, op)| {
                     Stmt::from_parts(
                         manager,
-                        float_formats,
+                        ffs,
                         user_ops,
                         &address,
                         i,

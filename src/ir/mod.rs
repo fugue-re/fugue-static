@@ -14,7 +14,7 @@ pub mod stmt;
 pub use stmt::{Stmt, StmtFormatter};
 
 pub mod types;
-pub use types::Type;
+pub use types::{FloatKind, Type};
 
 pub mod var;
 pub use var::{Var, VarFormatter};
